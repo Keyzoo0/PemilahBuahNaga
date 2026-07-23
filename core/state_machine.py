@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from detector import filter_dets, draw_overlay
 from store import store
@@ -63,6 +64,9 @@ class SortController:
         self._active_servo = 1
         self._last_motion = 0.0
         self._last_fg = None
+        self._consec_rejects = 0    # pengaman: cegah loop reject tanpa henti
+        self._t_watch_start = 0.0   # kapan mulai mengawasi (anti-deadlock settle)
+        self._last_fruit = None     # (label, conf) buah terakhir terlihat saat watch
         self._cam2_best = None      # posisi deteksi terbaik cam2 (bantu kalibrasi ROI)
         self._led_status = None     # status indikator terakhir yang dikirim
         self._t_last_bip = 0.0      # penanda bip-bip terakhir saat sorting
@@ -182,12 +186,20 @@ class SortController:
         return int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
 
     def _roi_gray(self, frame):
+        """Grayscale ROI untuk deteksi gerakan.
+
+        Dikecilkan + di-blur agar NOISE SENSOR kamera (bintik) tidak terbaca
+        sebagai gerakan. Tanpa ini, belt diam pun terukur ~5 dan gerbang settle
+        tidak pernah selesai.
+        """
         x, y, w, h = self._roi_box()
         x, y = max(0, x), max(0, y)
         crop = frame[y:y + h, x:x + w]
         if crop.size == 0:
             crop = frame
-        return cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        small = cv2.resize(gray, (160, 120), interpolation=cv2.INTER_AREA)
+        return cv2.GaussianBlur(small, (5, 5), 0)
 
     def _motion(self, gray):
         """Rata-rata beda antar-frame di ROI (0-255). Besar = ada gerakan."""
@@ -199,7 +211,13 @@ class SortController:
         return float(d.mean())
 
     def _foreground_ratio(self, frame):
-        """Fraksi piksel ROI yang beda dari latar kosong. None jika belum kalibrasi."""
+        """Luas objek asing di ROI (fraksi 0-1). None jika latar belum dikalibrasi.
+
+        Memakai KOMPONEN TERBESAR, bukan total piksel berubah. Belt bertekstur
+        yang bergeser menghasilkan bintik-bintik kecil tersebar (bukan objek) —
+        itu dibuang lewat blur + morphological opening, sehingga tidak memicu
+        reject palsu. Buah/objek nyata membentuk satu gumpalan besar.
+        """
         if self._empty_ref is None:
             return None
         x, y, w, h = self._roi_box()
@@ -208,9 +226,20 @@ class SortController:
         ref = self._empty_ref[y:y + h, x:x + w]
         if cur.size == 0 or cur.shape != ref.shape:
             return None
-        diff = cv2.absdiff(cur, ref)
+
+        small = (160, 120)
+        cur_s = cv2.GaussianBlur(cv2.resize(cur, small, interpolation=cv2.INTER_AREA), (5, 5), 0)
+        ref_s = cv2.GaussianBlur(cv2.resize(ref, small, interpolation=cv2.INTER_AREA), (5, 5), 0)
+
         thr = int(self.cfg.get("detect", "fg_pixel_threshold", default=30))
-        return float((diff > thr).mean())
+        mask = (cv2.absdiff(cur_s, ref_s) > thr).astype(np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+
+        n, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        if n <= 1:
+            return 0.0
+        largest = int(stats[1:, cv2.CC_STAT_AREA].max())
+        return float(largest) / float(mask.size)
 
     def save_empty_reference(self):
         frame = self.cams.cam1.read()
@@ -340,6 +369,8 @@ class SortController:
         # mulai "watch" begitu ada gerakan / objek muncul; tetap awasi walau lalu diam
         if not self._watching and (motion > motion_thr or fg_present):
             self._watching = True
+            self._t_watch_start = time.time()
+            self._last_fruit = None
 
         if not self._watching:
             self._settle_low = 0
@@ -351,7 +382,28 @@ class SortController:
         # sedang mengawasi -> jalankan YOLO
         dets = self._infer(frame, self._detcfg_cam1(), roi)
         fruit = best_det(dets)
+        if fruit is not None:
+            self._last_fruit = (fruit.label, fruit.conf)
         self._set_annotated("cam1", draw_overlay(frame, dets, roi, "IDLE (watch)", self.last_message))
+
+        # ANTI-DEADLOCK: kalau gerakan tak pernah reda (mis. noise kamera tinggi),
+        # jangan menggantung selamanya — putuskan dengan data yang sudah ada.
+        timeout = float(self.cfg.get("detect", "settle_timeout_seconds", default=8.0))
+        if self._t_watch_start and (time.time() - self._t_watch_start) > timeout:
+            if self._last_fruit:
+                self.ripeness = self._last_fruit[0]
+                self.ripeness_conf = self._last_fruit[1]
+                self.ripeness_index = getattr(self.detector, "label_to_index", {}).get(self.ripeness)
+                print(f"[SM] settle timeout {timeout}s -> paksa putuskan: {self.ripeness}")
+                self._start_dragonfruit()
+                return
+            if fg_present and self._reject_allowed():
+                self._start_reject()
+                return
+            self._watching = False
+            self._settle_low = 0
+            self.last_message = "Menunggu objek di kamera 1"
+            return
 
         if motion > motion_thr:
             # masih ada gerakan (tangan) -> reset settle, tunggu
@@ -376,7 +428,7 @@ class SortController:
                 self.ripeness = self._votes.most_common(1)[0][0]
                 self.ripeness_index = getattr(self.detector, "label_to_index", {}).get(self.ripeness)
                 self._start_dragonfruit()
-            elif fg_present:
+            elif fg_present and self._reject_allowed():
                 self._start_reject()
             else:
                 # tak ada objek konklusif (false trigger / sudah pergi) -> berhenti awasi
@@ -385,6 +437,7 @@ class SortController:
                 self.last_message = "Menunggu objek di kamera 1"
 
     def _start_dragonfruit(self):
+        self._consec_rejects = 0  # ada buah naga nyata -> pengaman reject di-reset
         # LED kini menandakan STATUS sistem (lihat _update_indicators), bukan kelas buah.
         action = (self.cfg.get("mapping", default={}) or {}).get(self.ripeness, "straight")
         self.last_action = action
@@ -398,7 +451,20 @@ class SortController:
             self.bridge.servo_open(self._active_servo)
             self._transition("SERVO_SORT", f"{self.ripeness}: servo{self._active_servo} buka, mundur + track cam2")
 
+    def _reject_allowed(self):
+        """Cegah loop reject: kalau berkali-kali reject beruntun tanpa satu pun
+        buah naga, kemungkinan besar latar kosong sudah tidak cocok."""
+        limit = int(self.cfg.get("detect", "max_consecutive_rejects", default=3))
+        if self._consec_rejects >= limit:
+            self._watching = False
+            self._settle_low = 0
+            self.last_message = (f"Reject beruntun {self._consec_rejects}x dihentikan — "
+                                 f"simpan ulang 'Latar Belt Kosong' di Kalibrasi")
+            return False
+        return True
+
     def _start_reject(self):
+        self._consec_rejects += 1
         self.ripeness = "bukan buah naga"
         self.last_action = "reject"
         self.bridge.motor_forward()        # REJECT -> maju buang
@@ -500,6 +566,8 @@ class SortController:
         self.last_action = None
         self._votes.clear()
         self._watching = False
+        self._t_watch_start = 0.0
+        self._last_fruit = None
         self._settle_low = 0
         self._empty = 0
         self._t_motor = 0.0

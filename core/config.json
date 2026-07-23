@@ -23,10 +23,12 @@
     },
     "presence_frames": 5,
     "exit_frames": 6,
-    "settle_motion_threshold": 6,
+    "settle_motion_threshold": 2,
     "settle_frames": 8,
     "fg_pixel_threshold": 30,
-    "fg_area_ratio": 0.04
+    "fg_area_ratio": 0.04,
+    "settle_timeout_seconds": 8.0,
+    "max_consecutive_rejects": 3
   },
   "timing": {
     "forward_extra_seconds": 2,
@@ -38,7 +40,7 @@
     "max_motor_runtime_seconds": 15,
     "fault_auto_reset_seconds": 5,
     "reject_forward_seconds": 4,
-    "servo_arm_delay_seconds": 1.0
+    "servo_arm_delay_seconds": 1
   },
   "mapping": {
     "mentah": "servo1",
