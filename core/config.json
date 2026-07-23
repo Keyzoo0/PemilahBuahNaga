@@ -40,7 +40,9 @@
     "max_motor_runtime_seconds": 15,
     "fault_auto_reset_seconds": 5,
     "reject_forward_seconds": 4,
-    "servo_arm_delay_seconds": 1
+    "servo_arm_delay_seconds": 1,
+    "servo_arm_delay_1": 1.0,
+    "servo_arm_delay_2": 1.0
   },
   "mapping": {
     "mentah": "servo1",
@@ -68,7 +70,8 @@
     },
     "track_conf": 0.3,
     "track_draw_conf": 0.3,
-    "min_box_area": 3000
+    "min_box_area": 3000,
+    "min_travel_px": 120
   },
   "serial": {
     "port": "/dev/ttyUSB0",
@@ -88,7 +91,8 @@
   },
   "system": {
     "save_snapshots": true,
-    "start_mode": "auto"
+    "start_mode": "auto",
+    "auto_save_empty_after_cycle": true
   },
   "web": {
     "port": 5000,

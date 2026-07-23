@@ -90,6 +90,7 @@ export default function Settings({ status }) {
           />
           {numField("Track confidence cam2 — ambang TAMPOL (0–1, kecil = lebih sensitif)", ["sort_cam2", "track_conf"], "0.01")}
           {numField("Draw confidence cam2 — ambang tampil di stream saja", ["sort_cam2", "track_draw_conf"], "0.01")}
+          {numField("Jarak tempuh minimum sebelum tampol (px)", ["sort_cam2", "min_travel_px"], "10")}
           <div className="roi-hint">
             Tip: aktifkan Mode MANUAL lalu klik "Servo1/Servo2 Open" untuk melihat posisi lengan sebelum menggambar kotak.
           </div>
@@ -143,7 +144,8 @@ export default function Settings({ status }) {
         </div>
         <div className="row4">
           {numField("Reject: durasi maju buang (dtk)", ["timing", "reject_forward_seconds"], "0.5")}
-          {numField("Jeda lengan siap sebelum boleh tampol (dtk)", ["timing", "servo_arm_delay_seconds"], "0.1")}
+          {numField("Jeda lengan siap SERVO 1 (dtk)", ["timing", "servo_arm_delay_1"], "0.1")}
+          {numField("Jeda lengan siap SERVO 2 (dtk)", ["timing", "servo_arm_delay_2"], "0.1")}
         </div>
       </div>
 

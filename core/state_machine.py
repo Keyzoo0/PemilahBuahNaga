@@ -64,6 +64,7 @@ class SortController:
         self._active_servo = 1
         self._last_motion = 0.0
         self._last_fg = None
+        self._sort_start_pos = None # posisi awal buah di cam2 saat sorting mulai
         self._consec_rejects = 0    # pengaman: cegah loop reject tanpa henti
         self._t_watch_start = 0.0   # kapan mulai mengawasi (anti-deadlock settle)
         self._last_fruit = None     # (label, conf) buah terakhir terlihat saat watch
@@ -278,6 +279,15 @@ class SortController:
         floor = min(self._track_conf(), float(s.get("track_draw_conf", 0.15)))
         return {"conf_threshold": floor, "conf_per_class": {}, "min_area": s["min_box_area"]}
 
+    def _arm_delay(self):
+        """Jeda sebelum boleh menampol. Bisa beda per servo karena jarak
+        tempuh buah ke tiap lengan berbeda."""
+        t = self.cfg.get("timing") or {}
+        key = f"servo_arm_delay_{self._active_servo}"
+        if key in t:
+            return float(t[key])
+        return float(t.get("servo_arm_delay_seconds", 1.0))
+
     def _active_paddle_roi(self):
         """ROI paddle untuk servo yang sedang aktif (servo1/servo2 posisinya beda)."""
         s = self.cfg.get("sort_cam2")
@@ -448,6 +458,7 @@ class SortController:
             self._transition("STRAIGHT_OUT", f"{self.ripeness}: mundur lurus keluar belakang")
         else:
             self._active_servo = 1 if action == "servo1" else 2
+            self._sort_start_pos = None
             self.bridge.servo_open(self._active_servo)
             self._transition("SERVO_SORT", f"{self.ripeness}: servo{self._active_servo} buka, mundur + track cam2")
 
@@ -510,12 +521,18 @@ class SortController:
         # Jeda "lengan siap": cam1 & cam2 saling tumpang tindih, sehingga buah yang
         # baru mulai jalan sudah terlihat cam2. Tunggu dulu supaya buah benar-benar
         # sampai di paddle, jangan menampol angin.
-        arm_delay = float(self.cfg.get("timing", "servo_arm_delay_seconds", default=1.0))
+        arm_delay = self._arm_delay()
         waited = time.time() - self._t_state
         if waited < arm_delay:
             self.last_message = (f"servo{self._active_servo} terbuka, menunggu buah mendekat "
                                  f"({waited:.1f}/{arm_delay:.1f}s)")
             return
+
+        # Catat posisi awal buah di cam2 (buah sudah terlihat sejak awal karena
+        # FOV cam1 & cam2 tumpang tindih).
+        bd = best_det(dets)
+        if self._sort_start_pos is None and bd is not None:
+            self._sort_start_pos = (bd.cx, bd.cy)
 
         # TAMPOL saat titik tengah buah masuk zona paddle servo yang aktif.
         # Cek SEMUA deteksi (bukan cuma yang conf tertinggi) agar buah dengan
@@ -525,12 +542,26 @@ class SortController:
         for d in sorted(dets, key=lambda x: -x.conf):
             if d.conf < tc:
                 continue
-            if (roi["x"] <= d.cx <= roi["x"] + roi["w"]
+            if not (roi["x"] <= d.cx <= roi["x"] + roi["w"]
                     and roi["y"] <= d.cy <= roi["y"] + roi["h"]):
-                self.bridge.servo_close(self._active_servo)  # kembali ke 0 derajat
-                self._transition("SERVO_RETURN",
-                                 f"Tampol! servo{self._active_servo} -> 0 (conf {d.conf:.2f})")
-                return
+                continue
+
+            # Wajib sudah MENEMPUH JARAK dari posisi awal. Ini mencegah tampol
+            # dini pada buah yang memang sudah tampak di cam2 sejak awal tapi
+            # belum sampai lengan servo.
+            need = float((self.cfg.get("sort_cam2") or {}).get("min_travel_px", 120))
+            if self._sort_start_pos is not None:
+                sx, sy = self._sort_start_pos
+                moved = ((d.cx - sx) ** 2 + (d.cy - sy) ** 2) ** 0.5
+                if moved < need:
+                    self.last_message = (f"servo{self._active_servo}: buah baru bergerak "
+                                         f"{moved:.0f}px (perlu {need:.0f}px)")
+                    continue
+
+            self.bridge.servo_close(self._active_servo)  # kembali ke 0 derajat
+            self._transition("SERVO_RETURN",
+                             f"Tampol! servo{self._active_servo} -> 0 (conf {d.conf:.2f})")
+            return
 
     def _state_servo_return(self):
         hold = float(self.cfg.get("timing", "servo_slap_hold_ms", default=500)) / 1000.0
@@ -548,8 +579,31 @@ class SortController:
         self.bridge.s1_close()
         self.bridge.s2_close()
         if time.time() - self._t_state >= float(self.cfg.get("timing", "cooldown_seconds", default=3.0)):
+            self._auto_refresh_empty_ref()
             self._reset_cycle()
             self._transition("IDLE", "Menunggu objek di kamera 1")
+
+    def _auto_refresh_empty_ref(self):
+        """Simpan ulang latar belt tiap siklus selesai.
+
+        Belt terus berputar sehingga permukaannya tak pernah sama; latar lama
+        cepat basi dan memicu reject palsu terus-menerus. Dengan refresh tiap
+        siklus, pembanding selalu segar.
+        """
+        if not self.cfg.get("system", "auto_save_empty_after_cycle", default=True):
+            return
+        frame = self.cams.cam1.read()
+        if frame is None:
+            return
+        # Jangan simpan kalau masih ada objek: buah bisa "menyatu" jadi latar
+        # dan selamanya tak terdeteksi.
+        if self._infer(frame, self._detcfg_cam1(), self.cfg.get("detect", "roi")):
+            print("[SM] latar TIDAK di-refresh: masih ada objek di cam1")
+            return
+        cv2.imwrite(str(EMPTY_REF), frame)
+        self._empty_ref = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        self._consec_rejects = 0
+        print("[SM] latar belt kosong di-refresh otomatis")
 
     def _state_fault(self):
         self.bridge.motor_stop()
@@ -568,6 +622,7 @@ class SortController:
         self._watching = False
         self._t_watch_start = 0.0
         self._last_fruit = None
+        self._sort_start_pos = None
         self._settle_low = 0
         self._empty = 0
         self._t_motor = 0.0
