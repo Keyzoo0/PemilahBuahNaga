@@ -39,6 +39,7 @@ def build():
     api.ctx["controller"] = controller
     api.ctx["bridge"] = bridge
     api.ctx["config"] = config
+    api.ctx["detector"] = detector
     return controller
 
 

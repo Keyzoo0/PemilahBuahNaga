@@ -39,6 +39,7 @@ class Detection:
     y1: float
     x2: float
     y2: float
+    cls_id: int = -1
 
     @property
     def cx(self):
@@ -66,7 +67,10 @@ class YOLODetector:
         print(f"[YOLO] Memuat model: {model_path}")
         self.model = YOLO(str(model_path))
         self.lock = threading.Lock()
-        print("[YOLO] Model siap.")
+        # index kelas asli dari model: {0: 'matang', 1: 'mentah', 2: 'setengah matang'}
+        self.class_names = {int(k): normalize_label(v) for k, v in self.model.names.items()}
+        self.label_to_index = {v: k for k, v in self.class_names.items()}
+        print(f"[YOLO] Model siap. Kelas: {self.class_names}")
 
     def infer(self, frame, imgsz=480, conf=0.25):
         if frame is None:
@@ -78,7 +82,7 @@ class YOLODetector:
         for box in r.boxes:
             cid = int(box.cls[0])
             x1, y1, x2, y2 = [float(v) for v in box.xyxy[0].tolist()]
-            dets.append(Detection(normalize_label(r.names[cid]), float(box.conf[0]), x1, y1, x2, y2))
+            dets.append(Detection(normalize_label(r.names[cid]), float(box.conf[0]), x1, y1, x2, y2, cid))
         return dets
 
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getHistory } from "../api.js";
+import { getHistory, getClasses } from "../api.js";
 
 const RIPE_CLASS = {
   matang: "ripe-matang",
@@ -41,6 +41,19 @@ function Stat({ cls, num, lbl }) {
 
 export default function Monitor({ status }) {
   const [history, setHistory] = useState([]);
+  const [labelIndex, setLabelIndex] = useState({}); // label -> index kelas model
+
+  useEffect(() => {
+    getClasses()
+      .then((d) => {
+        const map = {};
+        Object.entries(d.classes || {}).forEach(([idx, label]) => {
+          map[label] = Number(idx);
+        });
+        setLabelIndex(map);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const load = () => getHistory(20).then((d) => setHistory(d.rows || [])).catch(() => {});
@@ -54,6 +67,8 @@ export default function Monitor({ status }) {
   const ripe = s.ripeness;
   const ripeCls = RIPE_CLASS[ripe] || "ripe-none";
   const ind = INDICATOR[s.indicator];
+  // index kelas: dari core, atau fallback peta label->index
+  const idx = s.ripeness_index ?? (ripe != null ? labelIndex[ripe] : undefined);
 
   return (
     <>
@@ -72,9 +87,23 @@ export default function Monitor({ status }) {
           </div>
         </div>
         <div className="spacer" />
-        <span className={"ripe-badge " + ripeCls}>
-          {ripe ? `${ripe} ${s.ripeness_conf ? "(" + s.ripeness_conf + ")" : ""}` : "belum ada buah"}
-        </span>
+        <div style={{ textAlign: "right" }}>
+          {ripe && idx != null && (
+            <div
+              style={{
+                fontFamily: "monospace",
+                fontSize: 13,
+                color: "var(--text-dim)",
+                marginBottom: 6,
+              }}
+            >
+              INDEX KELAS: <b style={{ color: "var(--pink)", fontSize: 18 }}>{idx}</b>
+            </div>
+          )}
+          <span className={"ripe-badge " + ripeCls}>
+            {ripe ? `${ripe} ${s.ripeness_conf ? "(" + s.ripeness_conf + ")" : ""}` : "belum ada buah"}
+          </span>
+        </div>
       </div>
 
       <div className="grid cards2" style={{ marginBottom: 16 }}>
@@ -107,6 +136,7 @@ export default function Monitor({ status }) {
             <thead>
               <tr>
                 <th>Waktu</th>
+                <th>Index</th>
                 <th>Kematangan</th>
                 <th>Conf</th>
                 <th>Aksi</th>
@@ -115,7 +145,7 @@ export default function Monitor({ status }) {
             <tbody>
               {history.length === 0 && (
                 <tr>
-                  <td colSpan="4" style={{ color: "var(--text-dim)" }}>
+                  <td colSpan="5" style={{ color: "var(--text-dim)" }}>
                     Belum ada data hari ini.
                   </td>
                 </tr>
@@ -123,6 +153,9 @@ export default function Monitor({ status }) {
               {history.map((r) => (
                 <tr key={r.id}>
                   <td>{r.created_at}</td>
+                  <td style={{ fontFamily: "monospace", fontWeight: 700, color: "var(--pink)" }}>
+                    {labelIndex[r.ripeness] ?? "—"}
+                  </td>
                   <td>
                     <span className={"ripe-badge " + (RIPE_CLASS[r.ripeness] || "ripe-none")}>
                       {r.ripeness || "-"}

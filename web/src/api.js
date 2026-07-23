@@ -19,6 +19,11 @@ export async function saveConfig(data) {
   return r.json();
 }
 
+export async function getClasses() {
+  const r = await fetch("/api/classes");
+  return r.json();
+}
+
 export async function getHistory(limit = 50) {
   const r = await fetch(`/api/history?limit=${limit}`);
   return r.json();

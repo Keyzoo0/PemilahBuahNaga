@@ -44,6 +44,13 @@ def api_status():
     return ctx["controller"].status()
 
 
+@app.get("/api/classes")
+def api_classes():
+    """Peta index kelas model: {0: 'matang', 1: 'mentah', 2: 'setengah matang'}."""
+    det = ctx.get("detector")
+    return {"classes": getattr(det, "class_names", {}) if det else {}}
+
+
 @app.get("/api/config")
 def api_get_config():
     return ctx["config"].all()

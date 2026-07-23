@@ -47,6 +47,7 @@ class SortController:
 
         self.state = "IDLE"
         self.ripeness = None
+        self.ripeness_index = None   # index kelas asli model (0/1/2)
         self.ripeness_conf = 0.0
         self.last_message = "Menunggu objek di kamera 1"
         self.last_action = None
@@ -365,6 +366,7 @@ class SortController:
         if self._settle_low >= settle_need:
             if self._votes:
                 self.ripeness = self._votes.most_common(1)[0][0]
+                self.ripeness_index = getattr(self.detector, "label_to_index", {}).get(self.ripeness)
                 self._start_dragonfruit()
             elif fg_present:
                 self._start_reject()
@@ -470,6 +472,7 @@ class SortController:
     # ---------------------------------------------------------
     def _reset_cycle(self):
         self.ripeness = None
+        self.ripeness_index = None
         self.ripeness_conf = 0.0
         self.last_action = None
         self._votes.clear()
@@ -517,6 +520,7 @@ class SortController:
         return {
             "state": self.state,
             "ripeness": self.ripeness,
+            "ripeness_index": self.ripeness_index,
             "ripeness_conf": round(self.ripeness_conf, 3),
             "action": self.last_action,
             "message": self.last_message,
