@@ -52,7 +52,11 @@ class SortController:
         self._snapshot_path = None
 
         self.estop = False
-        self.manual_mode = False
+        # boot ke mode manual (aman) bila diset, agar konveyor tak bergerak
+        # sendiri saat Pi baru menyala; operator klik AUTO di web untuk mulai.
+        self.manual_mode = cfg.get("system", "start_mode", default="manual") == "manual"
+        if self.manual_mode:
+            self.last_message = "Boot mode MANUAL — klik AUTO di web untuk mulai sortasi"
         self.running = False
 
         # frame teranotasi terbaru untuk stream web
