@@ -16,13 +16,17 @@
     },
     "min_box_area": 4000,
     "roi": {
-      "x": 256,
-      "y": 41,
-      "w": 925,
-      "h": 614
+      "x": 392,
+      "y": 50,
+      "w": 847,
+      "h": 666
     },
     "presence_frames": 5,
-    "exit_frames": 6
+    "exit_frames": 6,
+    "settle_motion_threshold": 6.0,
+    "settle_frames": 8,
+    "fg_pixel_threshold": 30,
+    "fg_area_ratio": 0.04
   },
   "timing": {
     "forward_extra_seconds": 2,
@@ -32,7 +36,8 @@
     "servo_slap_hold_ms": 500,
     "cooldown_seconds": 3,
     "max_motor_runtime_seconds": 15,
-    "fault_auto_reset_seconds": 5
+    "fault_auto_reset_seconds": 5,
+    "reject_forward_seconds": 4
   },
   "mapping": {
     "mentah": "servo1",
@@ -41,10 +46,10 @@
   },
   "sort_cam2": {
     "paddle_roi": {
-      "x": 0,
-      "y": 200,
-      "w": 500,
-      "h": 320
+      "x": 520,
+      "y": 37,
+      "w": 368,
+      "h": 663
     },
     "slap_x_ratio": 0.45,
     "min_box_area": 4000
@@ -65,7 +70,7 @@
   },
   "system": {
     "save_snapshots": true,
-    "start_mode": "manual"
+    "start_mode": "auto"
   },
   "web": {
     "port": 5000,

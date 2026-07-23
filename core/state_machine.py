@@ -1,18 +1,23 @@
 """
-SortController — state machine sortasi buah naga.
+SortController — state machine sortasi buah naga (alur terkoreksi).
 
 Alur:
-  IDLE -> CLASSIFY -> FORWARD_CLEAR -> FORWARD_EXTRA -> DISPATCH
-    matang           -> STRAIGHT_OUT -> STRAIGHT_EXTRA -> COOLDOWN
-    mentah/setengah  -> SERVO_SORT -> SERVO_RETURN -> COOLDOWN
+  IDLE (motor stop, pantau cam1)
+    - objek/gerakan muncul -> masuk mode "watch"
+    - GERBANG SETTLE: tunggu gerakan berhenti (tangan pergi) selama settle_frames
+    - setelah settle:
+        * terdeteksi BUAH NAGA -> mundur ke servo (sortir)
+            matang           -> STRAIGHT_OUT (mundur lurus keluar +5s)
+            mentah           -> SERVO_SORT servo1 (mundur, cam2 track, tampol)
+            setengah matang  -> SERVO_SORT servo2
+        * ada objek tapi BUKAN buah naga -> REJECT_FORWARD (maju buang)
+        * kosong -> tetap IDLE
   COOLDOWN -> IDLE
-  (FAULT bila watchdog motor / kamera bermasalah)
+  FAULT (watchdog motor / anomali)
 
-Optimasi Pi: hanya SATU kamera di-inference per state
-  - cam1 saat IDLE/CLASSIFY/FORWARD*
-  - cam2 saat STRAIGHT*/SERVO*
+Optimasi Pi: cam1 di-inference hanya saat ada aktivitas (watch); cam2 saat sorting.
+Anti-tangan: keputusan hanya diambil saat scene stabil (tidak ada gerakan).
 """
-import os
 import threading
 import time
 from collections import Counter
@@ -24,7 +29,9 @@ import cv2
 from detector import filter_dets, draw_overlay
 from store import store
 
-UPLOAD_DIR = Path(__file__).resolve().parent / "static" / "uploads"
+BASE_DIR = Path(__file__).resolve().parent
+UPLOAD_DIR = BASE_DIR / "static" / "uploads"
+EMPTY_REF = BASE_DIR / "empty_ref.jpg"
 
 
 def best_det(dets):
@@ -41,28 +48,38 @@ class SortController:
         self.state = "IDLE"
         self.ripeness = None
         self.ripeness_conf = 0.0
-        self.last_message = "Menunggu buah di kamera 1"
+        self.last_message = "Menunggu objek di kamera 1"
         self.last_action = None
 
         self._votes = Counter()
-        self._presence = 0
-        self._empty = 0
+        self._watching = False      # True setelah objek/gerakan masuk (tetap awasi walau diam)
+        self._settle_low = 0        # frame berturut-turut tanpa gerakan
+        self._empty = 0             # frame kosong (untuk fase cam2)
+        self._prev_gray = None      # untuk deteksi gerakan
         self._t_state = time.time()
         self._t_motor = 0.0
         self._snapshot_path = None
+        self._active_servo = 1
+        self._last_motion = 0.0
+        self._last_fg = None
 
         self.estop = False
-        # boot ke mode manual (aman) bila diset, agar konveyor tak bergerak
-        # sendiri saat Pi baru menyala; operator klik AUTO di web untuk mulai.
         self.manual_mode = cfg.get("system", "start_mode", default="manual") == "manual"
         if self.manual_mode:
             self.last_message = "Boot mode MANUAL — klik AUTO di web untuk mulai sortasi"
         self.running = False
 
-        # frame teranotasi terbaru untuk stream web
         self.annotated = {"cam1": None, "cam2": None}
         self._ann_lock = threading.Lock()
         self.fault_count = 0
+
+        # latar belt kosong (untuk deteksi objek reject)
+        self._empty_ref = None
+        if EMPTY_REF.exists():
+            img = cv2.imread(str(EMPTY_REF))
+            if img is not None:
+                self._empty_ref = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                print("[SM] Latar kosong dimuat dari empty_ref.jpg")
 
     # ---------------------------------------------------------
     def start(self):
@@ -99,9 +116,56 @@ class SortController:
     def _motor_watchdog(self):
         limit = float(self.cfg.get("timing", "max_motor_runtime_seconds", default=15.0))
         if self._t_motor and (time.time() - self._t_motor) > limit:
-            self._enter_fault("motor melebihi batas waktu (buah tidak terdeteksi keluar)")
+            self._enter_fault("motor melebihi batas waktu (objek tidak terdeteksi keluar)")
             return True
         return False
+
+    # ---------------------------------------------------------
+    # HELPER VISI: gerakan & foreground
+    # ---------------------------------------------------------
+    def _roi_box(self):
+        roi = self.cfg.get("detect", "roi") or {"x": 0, "y": 0, "w": 99999, "h": 99999}
+        return int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
+
+    def _roi_gray(self, frame):
+        x, y, w, h = self._roi_box()
+        x, y = max(0, x), max(0, y)
+        crop = frame[y:y + h, x:x + w]
+        if crop.size == 0:
+            crop = frame
+        return cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+
+    def _motion(self, gray):
+        """Rata-rata beda antar-frame di ROI (0-255). Besar = ada gerakan."""
+        if self._prev_gray is None or self._prev_gray.shape != gray.shape:
+            self._prev_gray = gray
+            return 0.0
+        d = cv2.absdiff(gray, self._prev_gray)
+        self._prev_gray = gray
+        return float(d.mean())
+
+    def _foreground_ratio(self, frame):
+        """Fraksi piksel ROI yang beda dari latar kosong. None jika belum kalibrasi."""
+        if self._empty_ref is None:
+            return None
+        x, y, w, h = self._roi_box()
+        x, y = max(0, x), max(0, y)
+        cur = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)[y:y + h, x:x + w]
+        ref = self._empty_ref[y:y + h, x:x + w]
+        if cur.size == 0 or cur.shape != ref.shape:
+            return None
+        diff = cv2.absdiff(cur, ref)
+        thr = int(self.cfg.get("detect", "fg_pixel_threshold", default=30))
+        return float((diff > thr).mean())
+
+    def save_empty_reference(self):
+        frame = self.cams.cam1.read()
+        if frame is None:
+            return False
+        cv2.imwrite(str(EMPTY_REF), frame)
+        self._empty_ref = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        print("[SM] Latar kosong disimpan.")
+        return True
 
     # ---------------------------------------------------------
     def _loop(self):
@@ -111,21 +175,9 @@ class SortController:
                 self._tick()
             except Exception as exc:
                 print(f"[SM] error tick: {exc}")
-            # jaga ~ maksimal 20 Hz; sisanya dibatasi kecepatan inference
             dt = time.time() - t0
             if dt < 0.05:
                 time.sleep(0.05 - dt)
-
-    def _infer_cam(self, cam_key, det_cfg, roi):
-        cam = self.cams.cam1 if cam_key == "cam1" else self.cams.cam2
-        frame = cam.read()
-        dets_all = self.detector.infer(
-            frame,
-            imgsz=int(self.cfg.get("detect", "imgsz", default=480)),
-            conf=min(det_cfg["conf_per_class"].values()) if det_cfg["conf_per_class"] else det_cfg["conf_threshold"],
-        ) if frame is not None else []
-        dets = filter_dets(dets_all, roi, det_cfg["min_area"], det_cfg["conf_threshold"], det_cfg["conf_per_class"])
-        return frame, dets
 
     def _detcfg_cam1(self):
         d = self.cfg.get("detect")
@@ -138,51 +190,45 @@ class SortController:
         return {"conf_threshold": d["conf_threshold"], "conf_per_class": d["conf_per_class"],
                 "min_area": s["min_box_area"]}
 
+    def _infer(self, frame, det_cfg, roi):
+        if frame is None:
+            return []
+        conf_floor = min(det_cfg["conf_per_class"].values()) if det_cfg["conf_per_class"] else det_cfg["conf_threshold"]
+        dets_all = self.detector.infer(frame, imgsz=int(self.cfg.get("detect", "imgsz", default=480)), conf=conf_floor)
+        return filter_dets(dets_all, roi, det_cfg["min_area"], det_cfg["conf_threshold"], det_cfg["conf_per_class"])
+
     # ---------------------------------------------------------
     def _tick(self):
-        # E-STOP / manual mode: state machine ditahan
         if self.estop or self.manual_mode:
-            f1 = self.cams.cam1.read()
-            f2 = self.cams.cam2.read()
-            self._set_annotated("cam1", draw_overlay(f1, [], self.cfg.get("detect", "roi"),
-                                                      "E-STOP" if self.estop else "MANUAL"))
-            self._set_annotated("cam2", draw_overlay(f2, [], None,
-                                                     "E-STOP" if self.estop else "MANUAL"))
+            tag = "E-STOP" if self.estop else "MANUAL"
+            self._set_annotated("cam1", draw_overlay(self.cams.cam1.read(), [], self.cfg.get("detect", "roi"), tag))
+            self._set_annotated("cam2", draw_overlay(self.cams.cam2.read(), [], self.cfg.get("sort_cam2", "paddle_roi"), tag))
             time.sleep(0.1)
             return
 
         st = self.state
 
-        # ---- FASE KAMERA 1 (deteksi + klasifikasi + forward) ----
-        if st in ("IDLE", "CLASSIFY", "FORWARD_CLEAR", "FORWARD_EXTRA"):
-            roi = self.cfg.get("detect", "roi")
-            frame, dets = self._infer_cam("cam1", self._detcfg_cam1(), roi)
-            self._set_annotated("cam1", draw_overlay(frame, dets, roi, st, self.last_message))
-            # cam2 raw (idle)
-            self._set_annotated("cam2", draw_overlay(self.cams.cam2.read(), [], None, "idle"))
-
+        if st in ("IDLE", "REJECT_FORWARD"):
+            frame1 = self.cams.cam1.read()
             if st == "IDLE":
-                self._state_idle(dets, frame)
-            elif st == "CLASSIFY":
-                self._state_classify()
-            elif st == "FORWARD_CLEAR":
-                self._state_forward_clear(dets)
-            elif st == "FORWARD_EXTRA":
-                self._state_forward_extra()
+                self._state_idle(frame1)
+            else:
+                self._state_reject(frame1)
+            self._set_annotated("cam2", draw_overlay(self.cams.cam2.read(), [], self.cfg.get("sort_cam2", "paddle_roi"), "idle"))
 
-        # ---- FASE KAMERA 2 (sorting) ----
         elif st in ("STRAIGHT_OUT", "STRAIGHT_EXTRA", "SERVO_SORT", "SERVO_RETURN"):
             roi2 = self.cfg.get("sort_cam2", "paddle_roi")
-            frame, dets = self._infer_cam("cam2", self._detcfg_cam2(), None)
-            self._set_annotated("cam2", draw_overlay(frame, dets, roi2, st, self.last_message))
+            frame2 = self.cams.cam2.read()
+            dets2 = self._infer(frame2, self._detcfg_cam2(), None)
+            self._set_annotated("cam2", draw_overlay(frame2, dets2, roi2, st, self.last_message))
             self._set_annotated("cam1", draw_overlay(self.cams.cam1.read(), [], self.cfg.get("detect", "roi"), "idle"))
 
             if st == "STRAIGHT_OUT":
-                self._state_straight_out(dets)
+                self._state_straight_out(dets2)
             elif st == "STRAIGHT_EXTRA":
                 self._state_straight_extra()
             elif st == "SERVO_SORT":
-                self._state_servo_sort(dets, frame)
+                self._state_servo_sort(dets2, frame2)
             elif st == "SERVO_RETURN":
                 self._state_servo_return()
 
@@ -192,65 +238,108 @@ class SortController:
             self._state_fault()
 
     # ---------------------------------------------------------
-    # STATE HANDLERS
+    # IDLE + GERBANG SETTLE (anti-tangan)
     # ---------------------------------------------------------
-    def _state_idle(self, dets, frame):
+    def _state_idle(self, frame):
         self.bridge.motor_stop()
-        d = best_det(dets)
-        if d is not None:
-            self._presence += 1
-            self._votes[d.label] += 1
-            if d.conf > self.ripeness_conf:
-                self.ripeness_conf = d.conf
-            if self._presence == 1:
-                self._snapshot_frame(frame)  # simpan snapshot awal
-        else:
-            self._presence = 0
+        if frame is None:
+            self.last_message = "Menunggu frame kamera 1..."
+            return
+
+        roi = self.cfg.get("detect", "roi")
+        gray = self._roi_gray(frame)
+        motion = self._motion(gray)
+        fg = self._foreground_ratio(frame)
+        self._last_motion, self._last_fg = motion, fg
+
+        motion_thr = float(self.cfg.get("detect", "settle_motion_threshold", default=6.0))
+        fg_thr = float(self.cfg.get("detect", "fg_area_ratio", default=0.04))
+        fg_present = fg is not None and fg >= fg_thr
+
+        # mulai "watch" begitu ada gerakan / objek muncul; tetap awasi walau lalu diam
+        if not self._watching and (motion > motion_thr or fg_present):
+            self._watching = True
+
+        if not self._watching:
+            self._settle_low = 0
+            self._votes.clear()
+            self.last_message = "Menunggu objek di kamera 1"
+            self._set_annotated("cam1", draw_overlay(frame, [], roi, "IDLE", self.last_message))
+            return
+
+        # sedang mengawasi -> jalankan YOLO
+        dets = self._infer(frame, self._detcfg_cam1(), roi)
+        fruit = best_det(dets)
+        self._set_annotated("cam1", draw_overlay(frame, dets, roi, "IDLE (watch)", self.last_message))
+
+        if motion > motion_thr:
+            # masih ada gerakan (tangan) -> reset settle, tunggu
+            self._settle_low = 0
             self._votes.clear()
             self.ripeness_conf = 0.0
-
-        need = int(self.cfg.get("detect", "presence_frames", default=5))
-        if self._presence >= need and self._votes:
-            self.ripeness = self._votes.most_common(1)[0][0]
-            self._transition("CLASSIFY", f"Terklasifikasi: {self.ripeness} ({self.ripeness_conf:.2f})")
-
-    def _state_classify(self):
-        # LED + beep hasil di firmware
-        self.bridge.result(self.ripeness)
-        self._empty = 0
-        self.bridge.motor_forward()
-        self._t_motor = time.time()
-        self._transition("FORWARD_CLEAR", "Forward: menunggu buah keluar frame kamera 1")
-
-    def _state_forward_clear(self, dets):
-        if self._motor_watchdog():
+            self.last_message = "Tunggu gerakan berhenti (tangan menaruh)..."
             return
-        if best_det(dets) is None:
-            self._empty += 1
-        else:
-            self._empty = 0
-        if self._empty >= int(self.cfg.get("detect", "exit_frames", default=6)):
-            self._transition("FORWARD_EXTRA", "Buah keluar frame, forward tambahan")
 
-    def _state_forward_extra(self):
-        extra = float(self.cfg.get("timing", "forward_extra_seconds", default=2.0))
-        if time.time() - self._t_state >= extra:
-            self._dispatch()
+        # gerakan berhenti -> hitung settle + kumpulkan vote
+        self._settle_low += 1
+        if fruit is not None:
+            self._votes[fruit.label] += 1
+            self.ripeness_conf = max(self.ripeness_conf, fruit.conf)
+            if self._snapshot_path is None:
+                self._snapshot_frame(frame)
+        self.last_message = f"Menstabilkan objek... ({self._settle_low})"
 
-    def _dispatch(self):
-        action = self.cfg.get("mapping", default={}).get(self.ripeness, "straight")
+        settle_need = int(self.cfg.get("detect", "settle_frames", default=8))
+        if self._settle_low >= settle_need:
+            if self._votes:
+                self.ripeness = self._votes.most_common(1)[0][0]
+                self._start_dragonfruit()
+            elif fg_present:
+                self._start_reject()
+            else:
+                # tak ada objek konklusif (false trigger / sudah pergi) -> berhenti awasi
+                self._watching = False
+                self._settle_low = 0
+                self.last_message = "Menunggu objek di kamera 1"
+
+    def _start_dragonfruit(self):
+        self.bridge.result(self.ripeness)  # LED + beep sesuai kelas
+        action = (self.cfg.get("mapping", default={}) or {}).get(self.ripeness, "straight")
         self.last_action = action
         self._empty = 0
-        self.bridge.motor_backward()
+        self.bridge.motor_backward()       # BUAH NAGA -> mundur ke servo (bukan forward!)
         self._t_motor = time.time()
         if action == "straight":
-            self._transition("STRAIGHT_OUT", "Matang: backward lurus sampai keluar")
+            self._transition("STRAIGHT_OUT", f"{self.ripeness}: mundur lurus keluar belakang")
         else:
-            servo_n = 1 if action == "servo1" else 2
-            self.bridge.servo_open(servo_n)
-            self._active_servo = servo_n
-            self._transition("SERVO_SORT", f"{self.ripeness}: servo{servo_n} open, backward + track kamera 2")
+            self._active_servo = 1 if action == "servo1" else 2
+            self.bridge.servo_open(self._active_servo)
+            self._transition("SERVO_SORT", f"{self.ripeness}: servo{self._active_servo} buka, mundur + track cam2")
 
+    def _start_reject(self):
+        self.ripeness = "bukan buah naga"
+        self.last_action = "reject"
+        self.bridge.result("none")         # LED mati (bukan buah naga)
+        self.bridge.motor_forward()        # REJECT -> maju buang
+        self._t_motor = time.time()
+        self._transition("REJECT_FORWARD", "Bukan buah naga: maju untuk dibuang")
+
+    # ---------------------------------------------------------
+    def _state_reject(self, frame):
+        if self._motor_watchdog():
+            return
+        # tampilkan
+        self._set_annotated("cam1", draw_overlay(frame, [], self.cfg.get("detect", "roi"), "REJECT_FORWARD", self.last_message))
+        dur = float(self.cfg.get("timing", "reject_forward_seconds", default=4.0))
+        if time.time() - self._t_state >= dur:
+            self.bridge.motor_stop()
+            self.bridge.beep(3)  # 3 beep = reject
+            store.add(self.ripeness, None, "reject", self._snapshot_path)
+            self._transition("COOLDOWN", "Objek reject dibuang")
+
+    # ---------------------------------------------------------
+    # FASE CAM2 (sorting buah naga)
+    # ---------------------------------------------------------
     def _state_straight_out(self, dets):
         if self._motor_watchdog():
             return
@@ -259,7 +348,7 @@ class SortController:
         else:
             self._empty = 0
         if self._empty >= int(self.cfg.get("detect", "exit_frames", default=6)):
-            self._transition("STRAIGHT_EXTRA", "Keluar frame kamera 2, backward tambahan 5s")
+            self._transition("STRAIGHT_EXTRA", "Keluar frame cam2, mundur tambahan")
 
     def _state_straight_extra(self):
         extra = float(self.cfg.get("timing", "backward_extra_matang_seconds", default=5.0))
@@ -269,7 +358,7 @@ class SortController:
 
     def _state_servo_sort(self, dets, frame):
         if self._motor_watchdog():
-            self.bridge.servo_close(getattr(self, "_active_servo", 1))
+            self.bridge.servo_close(self._active_servo)
             return
         d = best_det(dets)
         if d is None:
@@ -290,9 +379,8 @@ class SortController:
             self._goto_cooldown()
 
     def _goto_cooldown(self):
-        # simpan riwayat + beep selesai
         if self.cfg.get("feedback", "buzzer_on_sort", default=True):
-            self.bridge.beep(2)
+            self.bridge.beep(2)  # 2 beep = sortir buah naga selesai
         store.add(self.ripeness, round(self.ripeness_conf, 3), self.last_action or "straight", self._snapshot_path)
         self._transition("COOLDOWN", f"Selesai: {self.ripeness} -> {self.last_action}")
 
@@ -302,14 +390,14 @@ class SortController:
         self.bridge.s2_close()
         if time.time() - self._t_state >= float(self.cfg.get("timing", "cooldown_seconds", default=3.0)):
             self._reset_cycle()
-            self._transition("IDLE", "Menunggu buah di kamera 1")
+            self._transition("IDLE", "Menunggu objek di kamera 1")
 
     def _state_fault(self):
         self.bridge.motor_stop()
         auto = float(self.cfg.get("timing", "fault_auto_reset_seconds", default=5.0))
         if time.time() - self._t_state >= auto:
             self._reset_cycle()
-            self._transition("IDLE", "Recover dari fault, menunggu buah")
+            self._transition("IDLE", "Recover dari fault, menunggu objek")
 
     # ---------------------------------------------------------
     def _reset_cycle(self):
@@ -317,9 +405,11 @@ class SortController:
         self.ripeness_conf = 0.0
         self.last_action = None
         self._votes.clear()
-        self._presence = 0
+        self._watching = False
+        self._settle_low = 0
         self._empty = 0
         self._t_motor = 0.0
+        self._prev_gray = None
         self._snapshot_path = None
 
     def _snapshot_frame(self, frame):
@@ -332,7 +422,7 @@ class SortController:
         self._snapshot_path = str(fn.relative_to(UPLOAD_DIR.parent))
 
     # ---------------------------------------------------------
-    # KONTROL EKSTERNAL (dari API/web)
+    # KONTROL EKSTERNAL
     # ---------------------------------------------------------
     def trigger_estop(self):
         self.estop = True
@@ -344,15 +434,16 @@ class SortController:
     def clear_estop(self):
         self.estop = False
         self._reset_cycle()
-        self._transition("IDLE", "E-STOP dilepas, menunggu buah")
+        self._transition("IDLE", "E-STOP dilepas, menunggu objek")
 
     def set_manual(self, on):
         self.manual_mode = bool(on)
         if on:
             self.bridge.motor_stop()
+            self.last_message = "Mode MANUAL — otomatis ditahan"
         else:
             self._reset_cycle()
-            self._transition("IDLE", "Mode auto aktif")
+            self._transition("IDLE", "Mode AUTO aktif, menunggu objek")
 
     def status(self):
         return {
@@ -369,5 +460,8 @@ class SortController:
             "cam2_ok": self.cams.cam2.healthy(),
             "cam1_fps": round(self.cams.cam1.actual_fps, 1),
             "cam2_fps": round(self.cams.cam2.actual_fps, 1),
+            "has_empty_ref": self._empty_ref is not None,
+            "motion": round(self._last_motion, 1),
+            "fg_ratio": round(self._last_fg, 3) if self._last_fg is not None else None,
             "counts_today": store.counts_today(),
         }

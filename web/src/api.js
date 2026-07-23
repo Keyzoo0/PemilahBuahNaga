@@ -37,6 +37,7 @@ export const estop = () => post("/api/estop");
 export const clearEstop = () => post("/api/estop/clear");
 export const setMode = (manual) => post("/api/mode", { manual });
 export const manualCmd = (cmd) => post("/api/manual", { cmd });
+export const calibrateEmpty = () => post("/api/calibrate/empty");
 
 // WebSocket status dengan auto-reconnect + fallback polling.
 export function subscribeStatus(onData) {

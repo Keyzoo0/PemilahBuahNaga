@@ -53,6 +53,10 @@ export default function Monitor({ status }) {
         <div>
           <div className="state-name">{s.state || "—"}</div>
           <div className="state-msg">{s.message || "Menunggu koneksi core..."}</div>
+          <div className="state-msg" style={{ marginTop: 4, fontFamily: "monospace" }}>
+            gerakan: {s.motion ?? "—"} · objek: {s.fg_ratio ?? "—"} · latar:{" "}
+            {s.has_empty_ref ? "✓ terkalibrasi" : "⚠ belum disimpan"}
+          </div>
         </div>
         <div className="spacer" />
         <span className={"ripe-badge " + ripeCls}>

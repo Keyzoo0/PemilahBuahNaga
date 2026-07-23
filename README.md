@@ -95,24 +95,31 @@ Bisa ~2× lebih cepat dengan export NCNN.
 ```mermaid
 stateDiagram-v2
     [*] --> IDLE
-    IDLE --> CLASSIFY : buah naga di ROI cam1
-    CLASSIFY --> FORWARD_CLEAR : LED+beep, motor forward
-    FORWARD_CLEAR --> FORWARD_EXTRA : buah keluar frame
-    FORWARD_EXTRA --> DISPATCH : +2 detik
-    DISPATCH --> STRAIGHT_OUT : matang
-    DISPATCH --> SERVO_SORT : mentah / setengah
-    STRAIGHT_OUT --> COOLDOWN : backward + 5 detik
-    SERVO_SORT --> SERVO_RETURN : cam2 trigger -> servo tampol (0 derajat)
+    IDLE --> IDLE : gerakan (tangan) -> tunggu settle
+    IDLE --> DISPATCH : BUAH NAGA (setelah diam)
+    IDLE --> REJECT_FORWARD : bukan buah naga
+    DISPATCH --> STRAIGHT_OUT : matang (mundur)
+    DISPATCH --> SERVO_SORT : mentah / setengah (mundur)
+    STRAIGHT_OUT --> COOLDOWN : keluar cam2 + 5 detik
+    SERVO_SORT --> SERVO_RETURN : cam2 trigger -> tampol (servo 0)
     SERVO_RETURN --> COOLDOWN
+    REJECT_FORWARD --> COOLDOWN : maju sampai terbuang
     COOLDOWN --> IDLE
 ```
 
-1. **Kamera 1** mendeteksi buah naga di area hitam → mengunci kelas kematangan (LED + beep).
-2. Konveyor **maju** hingga buah keluar frame, lalu **+2 detik**.
-3. **Matang** → konveyor **mundur** lurus sampai keluar, +5 detik.
-4. **Mentah/Setengah** → servo terkait **buka 51°**, konveyor mundur, **Kamera 2** melacak buah;
-   saat buah mencapai lengan servo & posisi cukup ke kiri → servo **snap ke 0° ("tampol")** menyortir buah.
-5. Watchdog & E-STOP menjaga keamanan; motor otomatis berhenti bila terjadi anomali.
+1. **Kamera 1** memantau area hitam. Saat objek/tangan masuk → **gerbang settle**: sistem menunggu
+   gerakan berhenti (tangan ditarik) agar keputusan tidak salah karena tangan.
+2. Setelah objek **diam**:
+   - **Buah naga** → LED + beep, konveyor **MUNDUR** ke arah servo:
+     - `matang` → mundur lurus keluar belakang, +5 detik.
+     - `mentah` → servo 1 buka 51°, mundur, **Kamera 2** melacak → saat mencapai lengan & cukup ke kiri, servo **snap 0° ("tampol")**.
+     - `setengah matang` → sama, servo 2.
+   - **Bukan buah naga** (objek reject) → konveyor **MAJU** sampai objek terbuang.
+3. Watchdog motor & E-STOP menjaga keamanan; motor otomatis berhenti bila terjadi anomali.
+
+> **Anti-tangan:** keputusan hanya diambil saat scene stabil (tidak ada gerakan), sehingga tangan
+> saat menaruh buah tidak memicu aksi. Deteksi "bukan buah naga" memakai pembanding **latar belt
+> kosong** (kalibrasi sekali via web).
 
 ---
 
@@ -191,8 +198,10 @@ Semua parameter di `core/config.json`, dapat diubah dari halaman **Kalibrasi** (
 |---|---|
 | **ROI deteksi (cam1)** | Area hitam tempat buah dihitung (editor visual seret kotak) |
 | **ROI paddle (cam2)** | Zona lengan servo + `slap_x_ratio` (ambang "agak ke kiri" pemicu tampol) |
+| **Anti-tangan (settle)** | Ambang gerakan, jumlah frame diam sebelum memutuskan |
+| **Latar belt kosong** | Tombol "Simpan Latar Belt Kosong" untuk deteksi objek reject |
 | **Deteksi** | `imgsz`, confidence, min box area, presence/exit frames |
-| **Timing** | Forward +2s, backward matang +5s, sudut servo 51°/0°, cooldown, watchdog |
+| **Timing** | Backward matang +5s, sudut servo 51°/0°, cooldown, watchdog, durasi buang reject |
 | **Mapping** | Kelas → servo1 / servo2 / lurus |
 | **Kamera & Serial** | bus-key, resolusi, port, baud |
 

@@ -68,6 +68,13 @@ def api_estop_clear():
     return {"ok": True}
 
 
+@app.post("/api/calibrate/empty")
+def api_calibrate_empty():
+    """Simpan snapshot belt kosong sebagai latar untuk deteksi objek reject."""
+    ok = ctx["controller"].save_empty_reference()
+    return {"ok": ok, "message": "Latar kosong tersimpan" if ok else "Gagal: frame kamera 1 belum tersedia"}
+
+
 @app.post("/api/mode")
 async def api_mode(request: Request):
     data = await request.json()

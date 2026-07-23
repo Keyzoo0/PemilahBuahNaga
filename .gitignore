@@ -6,3 +6,4 @@ core/static/uploads/*/
 web/node_modules/
 web/dist/
 *.log
+core/empty_ref.jpg

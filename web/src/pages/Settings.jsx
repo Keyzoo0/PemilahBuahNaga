@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getConfig, saveConfig, manualCmd } from "../api.js";
+import { getConfig, saveConfig, manualCmd, calibrateEmpty } from "../api.js";
 import RoiEditor from "../components/RoiEditor.jsx";
 
 // util set nilai nested immutable via path array
@@ -42,6 +42,12 @@ export default function Settings({ status }) {
     // rapikan tipe angka pada beberapa field agar tetap number
     const res = await saveConfig(cfg);
     setToast(res.ok ? { t: "ok", m: res.message } : { t: "err", m: res.message || "Gagal" });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const doCalibrateEmpty = async () => {
+    const res = await calibrateEmpty();
+    setToast(res.ok ? { t: "ok", m: res.message } : { t: "err", m: res.message });
     setTimeout(() => setToast(null), 4000);
   };
 
@@ -90,6 +96,21 @@ export default function Settings({ status }) {
           {numField("Presence frames (konfirmasi ada)", ["detect", "presence_frames"], "1")}
           {numField("Exit frames (konfirmasi keluar)", ["detect", "exit_frames"], "1")}
         </div>
+        <div className="subhead">Anti-tangan (gerbang settle) & deteksi reject</div>
+        <div className="row4">
+          {numField("Ambang gerakan (makin kecil makin sensitif)", ["detect", "settle_motion_threshold"], "0.5")}
+          {numField("Settle frames (tunggu diam)", ["detect", "settle_frames"], "1")}
+          {numField("Ambang piksel foreground", ["detect", "fg_pixel_threshold"], "1")}
+          {numField("Rasio area objek reject (0–1)", ["detect", "fg_area_ratio"], "0.01")}
+        </div>
+        <div className="manual-grid" style={{ marginTop: 4 }}>
+          <button className="btn sm primary" onClick={doCalibrateEmpty}>
+            📷 Simpan Latar Belt Kosong
+          </button>
+          <span className="cam-meta" style={{ alignSelf: "center" }}>
+            Kosongkan belt lalu klik — dipakai membedakan objek reject vs belt kosong.
+          </span>
+        </div>
       </div>
 
       {/* Timing */}
@@ -106,6 +127,9 @@ export default function Settings({ status }) {
           {numField("Cooldown (dtk)", ["timing", "cooldown_seconds"], "0.1")}
           {numField("Max motor runtime (dtk)", ["timing", "max_motor_runtime_seconds"], "0.5")}
           {numField("Fault auto-reset (dtk)", ["timing", "fault_auto_reset_seconds"], "0.5")}
+        </div>
+        <div className="row4">
+          {numField("Reject: durasi maju buang (dtk)", ["timing", "reject_forward_seconds"], "0.5")}
         </div>
       </div>
 
