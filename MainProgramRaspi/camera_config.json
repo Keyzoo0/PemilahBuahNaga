@@ -1,0 +1,18 @@
+{
+  "Camera_1": {
+    "device": "/dev/video0",
+    "all_devices": [
+      "/dev/video0"
+    ],
+    "bus_key": "usb1-1-1",
+    "card_name": "USB Composite Device: DV20 USB"
+  },
+  "Camera_2": {
+    "device": "/dev/video2",
+    "all_devices": [
+      "/dev/video2"
+    ],
+    "bus_key": "usb3-3-1",
+    "card_name": "USB Composite Device: DV20 USB"
+  }
+}

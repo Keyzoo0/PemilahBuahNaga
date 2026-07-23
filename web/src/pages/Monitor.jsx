@@ -1,0 +1,124 @@
+import React, { useEffect, useState } from "react";
+import { getHistory } from "../api.js";
+
+const RIPE_CLASS = {
+  matang: "ripe-matang",
+  "setengah matang": "ripe-setengah",
+  mentah: "ripe-mentah",
+};
+
+function CameraCard({ badge, title, src, fps, ok }) {
+  return (
+    <div className="card cam-card">
+      <div className="cam-head">
+        <span className="cam-badge">{badge}</span>
+        <span className="cam-meta">
+          {title} · {ok ? `${fps ?? "?"} fps` : "OFFLINE"}
+        </span>
+      </div>
+      <div className="cam-view">
+        <img src={src} alt={title} />
+      </div>
+    </div>
+  );
+}
+
+function Stat({ cls, num, lbl }) {
+  return (
+    <div className={"card stat " + cls}>
+      <div className="num">{num}</div>
+      <div className="lbl">{lbl}</div>
+    </div>
+  );
+}
+
+export default function Monitor({ status }) {
+  const [history, setHistory] = useState([]);
+
+  useEffect(() => {
+    const load = () => getHistory(20).then((d) => setHistory(d.rows || [])).catch(() => {});
+    load();
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, []);
+
+  const s = status || {};
+  const counts = s.counts_today || {};
+  const ripe = s.ripeness;
+  const ripeCls = RIPE_CLASS[ripe] || "ripe-none";
+
+  return (
+    <>
+      <div className="state-banner">
+        <div>
+          <div className="state-name">{s.state || "—"}</div>
+          <div className="state-msg">{s.message || "Menunggu koneksi core..."}</div>
+        </div>
+        <div className="spacer" />
+        <span className={"ripe-badge " + ripeCls}>
+          {ripe ? `${ripe} ${s.ripeness_conf ? "(" + s.ripeness_conf + ")" : ""}` : "belum ada buah"}
+        </span>
+      </div>
+
+      <div className="grid cards2" style={{ marginBottom: 16 }}>
+        <CameraCard
+          badge="CAM 1 · DETEKSI"
+          title="Area hitam / klasifikasi"
+          src="/video/cam1"
+          fps={s.cam1_fps}
+          ok={s.cam1_ok}
+        />
+        <CameraCard
+          badge="CAM 2 · SORTING"
+          title="Tracking lengan servo"
+          src="/video/cam2"
+          fps={s.cam2_fps}
+          ok={s.cam2_ok}
+        />
+      </div>
+
+      <div className="grid cards3" style={{ marginBottom: 16 }}>
+        <Stat cls="matang" num={counts["matang"] || 0} lbl="Matang (lurus)" />
+        <Stat cls="setengah" num={counts["setengah matang"] || 0} lbl="Setengah matang (Servo 2)" />
+        <Stat cls="mentah" num={counts["mentah"] || 0} lbl="Mentah (Servo 1)" />
+      </div>
+
+      <div className="card">
+        <h3>Riwayat Sortasi Terbaru</h3>
+        <div style={{ overflowX: "auto" }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Waktu</th>
+                <th>Kematangan</th>
+                <th>Conf</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.length === 0 && (
+                <tr>
+                  <td colSpan="4" style={{ color: "var(--text-dim)" }}>
+                    Belum ada data hari ini.
+                  </td>
+                </tr>
+              )}
+              {history.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.created_at}</td>
+                  <td>
+                    <span className={"ripe-badge " + (RIPE_CLASS[r.ripeness] || "ripe-none")}>
+                      {r.ripeness || "-"}
+                    </span>
+                  </td>
+                  <td>{r.confidence ?? "-"}</td>
+                  <td>{r.action || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}

@@ -1,0 +1,51 @@
+{
+  "camera": {
+    "cam1_bus_key": "usb1-1-1",
+    "cam2_bus_key": "usb3-3-1",
+    "width": 1280,
+    "height": 720,
+    "fps": 30
+  },
+  "detect": {
+    "imgsz": 480,
+    "conf_threshold": 0.50,
+    "conf_per_class": { "matang": 0.50, "mentah": 0.50, "setengah matang": 0.50 },
+    "min_box_area": 4000,
+    "roi": { "x": 0, "y": 0, "w": 1280, "h": 720 },
+    "presence_frames": 5,
+    "exit_frames": 6
+  },
+  "timing": {
+    "forward_extra_seconds": 2.0,
+    "backward_extra_matang_seconds": 5.0,
+    "servo_open_angle": 51,
+    "servo_close_angle": 0,
+    "servo_slap_hold_ms": 500,
+    "cooldown_seconds": 3.0,
+    "max_motor_runtime_seconds": 15.0,
+    "fault_auto_reset_seconds": 5.0
+  },
+  "mapping": {
+    "mentah": "servo1",
+    "setengah matang": "servo2",
+    "matang": "straight"
+  },
+  "sort_cam2": {
+    "paddle_roi": { "x": 0, "y": 200, "w": 500, "h": 320 },
+    "slap_x_ratio": 0.45,
+    "min_box_area": 4000
+  },
+  "serial": {
+    "port": "/dev/ttyUSB0",
+    "baud": 115200,
+    "auto_reconnect": true,
+    "heartbeat_seconds": 1.0
+  },
+  "feedback": {
+    "led_per_class": { "matang": "green", "setengah matang": "yellow", "mentah": "red" },
+    "buzzer_on_sort": true
+  },
+  "system": {
+    "save_snapshots": true
+  }
+}

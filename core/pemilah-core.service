@@ -1,0 +1,16 @@
+[Unit]
+Description=PemilahBuahNaga Core (YOLO sorting + web monitoring)
+After=network.target
+
+[Service]
+Type=simple
+User=dila
+WorkingDirectory=/home/dila/PemilahBuahNaga/core
+ExecStart=/home/dila/PemilahBuahNaga/.venv/bin/python /home/dila/PemilahBuahNaga/core/main.py
+Restart=always
+RestartSec=3
+# akses serial + kamera
+SupplementaryGroups=dialout video plugdev
+
+[Install]
+WantedBy=multi-user.target
