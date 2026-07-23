@@ -62,6 +62,8 @@ class SortController:
         self._active_servo = 1
         self._last_motion = 0.0
         self._last_fg = None
+        self._led_status = None     # status indikator terakhir yang dikirim
+        self._t_last_bip = 0.0      # penanda bip-bip terakhir saat sorting
 
         self.estop = False
         self.manual_mode = cfg.get("system", "start_mode", default="manual") == "manual"
@@ -119,6 +121,56 @@ class SortController:
             self._enter_fault("motor melebihi batas waktu (objek tidak terdeteksi keluar)")
             return True
         return False
+
+    # ---------------------------------------------------------
+    # INDIKATOR LED & BUZZER (status sistem)
+    #   KUNING = Raspi belum siap
+    #   HIJAU  = siap, buah boleh ditaruh di kamera 1
+    #   MERAH  = sedang sorting (buzzer bip-bip)
+    #   transisi ke HIJAU = bip panjang 1.5 detik
+    # ---------------------------------------------------------
+    _LED_BY_STATUS = {"ready": "green", "busy": "red", "notready": "yellow"}
+    _BUSY_STATES = ("REJECT_FORWARD", "STRAIGHT_OUT", "STRAIGHT_EXTRA",
+                    "SERVO_SORT", "SERVO_RETURN", "COOLDOWN")
+
+    def _indicator_status(self):
+        if (self.estop or self.manual_mode or self.state == "FAULT"
+                or not self.bridge.connected
+                or not self.cams.cam1.healthy() or not self.cams.cam2.healthy()):
+            return "notready"
+        if self.state in self._BUSY_STATES:
+            return "busy"
+        return "ready"  # IDLE = siap ditaruh buah
+
+    def _apply_status_led(self, status):
+        want = self._LED_BY_STATUS[status]
+        for color in ("green", "yellow", "red"):
+            self.bridge.send(f"led {color} {1 if color == want else 0}")
+
+    def _long_beep(self):
+        ms = int(self.cfg.get("feedback", "ready_beep_ms", default=1500))
+        self.bridge.send("buzzer on")
+        threading.Timer(ms / 1000.0, lambda: self.bridge.send("buzzer off")).start()
+
+    def _update_indicators(self):
+        if not self.bridge.connected:
+            self._led_status = None  # paksa set ulang saat serial tersambung lagi
+            return
+
+        status = self._indicator_status()
+        if status != self._led_status:
+            self._apply_status_led(status)
+            if status == "ready":
+                self._long_beep()  # transisi ke HIJAU -> bip panjang
+            self._led_status = status
+            self._t_last_bip = 0.0
+
+        if status == "busy":
+            interval = int(self.cfg.get("feedback", "sorting_bip_interval_ms", default=1000)) / 1000.0
+            now = time.time()
+            if now - self._t_last_bip >= interval:
+                self.bridge.beep(2)  # bip-bip selama lampu merah
+                self._t_last_bip = now
 
     # ---------------------------------------------------------
     # HELPER VISI: gerakan & foreground
@@ -206,6 +258,8 @@ class SortController:
 
     # ---------------------------------------------------------
     def _tick(self):
+        self._update_indicators()
+
         if self.estop or self.manual_mode:
             tag = "E-STOP" if self.estop else "MANUAL"
             self._set_annotated("cam1", draw_overlay(self.cams.cam1.read(), [], self.cfg.get("detect", "roi"), tag))
@@ -251,6 +305,17 @@ class SortController:
         self.bridge.motor_stop()
         if frame is None:
             self.last_message = "Menunggu frame kamera 1..."
+            return
+
+        # Jangan mulai siklus kalau perangkat belum siap (LED kuning):
+        # serial putus / salah satu kamera mati -> sortir pasti gagal & memicu FAULT.
+        if self._indicator_status() == "notready":
+            self._watching = False
+            self._settle_low = 0
+            self._votes.clear()
+            self.last_message = "Perangkat belum siap (cek kamera/serial)"
+            self._set_annotated("cam1", draw_overlay(frame, [], self.cfg.get("detect", "roi"),
+                                                     "BELUM SIAP", self.last_message))
             return
 
         roi = self.cfg.get("detect", "roi")
@@ -310,7 +375,7 @@ class SortController:
                 self.last_message = "Menunggu objek di kamera 1"
 
     def _start_dragonfruit(self):
-        self.bridge.result(self.ripeness)  # LED + beep sesuai kelas
+        # LED kini menandakan STATUS sistem (lihat _update_indicators), bukan kelas buah.
         action = (self.cfg.get("mapping", default={}) or {}).get(self.ripeness, "straight")
         self.last_action = action
         self._empty = 0
@@ -326,7 +391,6 @@ class SortController:
     def _start_reject(self):
         self.ripeness = "bukan buah naga"
         self.last_action = "reject"
-        self.bridge.result("none")         # LED mati (bukan buah naga)
         self.bridge.motor_forward()        # REJECT -> maju buang
         self._t_motor = time.time()
         self._transition("REJECT_FORWARD", "Bukan buah naga: maju untuk dibuang")
@@ -340,7 +404,6 @@ class SortController:
         dur = float(self.cfg.get("timing", "reject_forward_seconds", default=4.0))
         if time.time() - self._t_state >= dur:
             self.bridge.motor_stop()
-            self.bridge.beep(3)  # 3 beep = reject
             store.add(self.ripeness, None, "reject", self._snapshot_path)
             self._transition("COOLDOWN", "Objek reject dibuang")
 
@@ -385,8 +448,7 @@ class SortController:
             self._goto_cooldown()
 
     def _goto_cooldown(self):
-        if self.cfg.get("feedback", "buzzer_on_sort", default=True):
-            self.bridge.beep(2)  # 2 beep = sortir buah naga selesai
+        # buzzer diatur oleh _update_indicators (bip-bip saat merah, bip panjang saat hijau)
         store.add(self.ripeness, round(self.ripeness_conf, 3), self.last_action or "straight", self._snapshot_path)
         self._transition("COOLDOWN", f"Selesai: {self.ripeness} -> {self.last_action}")
 
@@ -466,6 +528,7 @@ class SortController:
             "cam2_ok": self.cams.cam2.healthy(),
             "cam1_fps": round(self.cams.cam1.actual_fps, 1),
             "cam2_fps": round(self.cams.cam2.actual_fps, 1),
+            "indicator": self._led_status,  # ready(hijau)/busy(merah)/notready(kuning)
             "has_empty_ref": self._empty_ref is not None,
             "motion": round(self._last_motion, 1),
             "fg_ratio": round(self._last_fg, 3) if self._last_fg is not None else None,

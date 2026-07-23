@@ -23,7 +23,7 @@
     },
     "presence_frames": 5,
     "exit_frames": 6,
-    "settle_motion_threshold": 6.0,
+    "settle_motion_threshold": 6,
     "settle_frames": 8,
     "fg_pixel_threshold": 30,
     "fg_area_ratio": 0.04
@@ -46,16 +46,16 @@
   },
   "sort_cam2": {
     "paddle_roi_1": {
-      "x": 560,
-      "y": 440,
-      "w": 440,
-      "h": 270
+      "x": 466,
+      "y": 475,
+      "w": 320,
+      "h": 243
     },
     "paddle_roi_2": {
-      "x": 500,
-      "y": 80,
-      "w": 560,
-      "h": 320
+      "x": 553,
+      "y": 34,
+      "w": 324,
+      "h": 282
     },
     "paddle_roi": {
       "x": 520,
@@ -73,10 +73,12 @@
     "heartbeat_seconds": 1
   },
   "feedback": {
-    "led_per_class": {
-      "matang": "green",
-      "setengah matang": "yellow",
-      "mentah": "red"
+    "ready_beep_ms": 1500,
+    "sorting_bip_interval_ms": 1000,
+    "led_status": {
+      "belum siap": "yellow",
+      "siap taruh buah": "green",
+      "sedang sorting": "red"
     },
     "buzzer_on_sort": true
   },

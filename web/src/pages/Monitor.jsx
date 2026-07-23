@@ -7,6 +7,13 @@ const RIPE_CLASS = {
   mentah: "ripe-mentah",
 };
 
+// indikator LED fisik di mesin
+const INDICATOR = {
+  ready: { color: "#22c55e", label: "🟢 SIAP — buah boleh ditaruh di kamera 1" },
+  busy: { color: "#ef4444", label: "🔴 SEDANG SORTING" },
+  notready: { color: "#eab308", label: "🟡 BELUM SIAP" },
+};
+
 function CameraCard({ badge, title, src, fps, ok }) {
   return (
     <div className="card cam-card">
@@ -46,11 +53,17 @@ export default function Monitor({ status }) {
   const counts = s.counts_today || {};
   const ripe = s.ripeness;
   const ripeCls = RIPE_CLASS[ripe] || "ripe-none";
+  const ind = INDICATOR[s.indicator];
 
   return (
     <>
       <div className="state-banner">
         <div>
+          {ind && (
+            <div style={{ color: ind.color, fontWeight: 800, fontSize: 15, marginBottom: 6 }}>
+              {ind.label}
+            </div>
+          )}
           <div className="state-name">{s.state || "—"}</div>
           <div className="state-msg">{s.message || "Menunggu koneksi core..."}</div>
           <div className="state-msg" style={{ marginTop: 4, fontFamily: "monospace" }}>
