@@ -192,12 +192,20 @@ journalctl -u pemilah-core -f
 
 ## 🎛️ Kalibrasi (via Web)
 
+Posisi ROI paddle per servo pada Kamera 2 (pemicu "tampol"):
+
+<p align="center">
+  <img src="docs/images/servo_calibration.jpg" width="80%" alt="Kalibrasi ROI servo pada kamera 2">
+</p>
+
+Buah naga di-"tampol" begitu titik tengahnya masuk kotak servo yang aktif — **Servo 1 (mentah)** & **Servo 2 (setengah matang)** punya zona sendiri karena posisi lengannya berbeda.
+
 Semua parameter di `core/config.json`, dapat diubah dari halaman **Kalibrasi** (hot-reload, tanpa restart):
 
 | Grup | Yang diatur |
 |---|---|
 | **ROI deteksi (cam1)** | Area hitam tempat buah dihitung (editor visual seret kotak) |
-| **ROI paddle (cam2)** | Zona lengan servo + `slap_x_ratio` (ambang "agak ke kiri" pemicu tampol) |
+| **ROI paddle (cam2)** | Zona per servo (`paddle_roi_1`/`paddle_roi_2`) — buah masuk kotak = tampol; `track_conf` sensitivitas deteksi cam2 |
 | **Anti-tangan (settle)** | Ambang gerakan, jumlah frame diam sebelum memutuskan |
 | **Latar belt kosong** | Tombol "Simpan Latar Belt Kosong" untuk deteksi objek reject |
 | **Deteksi** | `imgsz`, confidence, min box area, presence/exit frames |

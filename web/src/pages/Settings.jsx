@@ -70,16 +70,28 @@ export default function Settings({ status }) {
           />
         </div>
         <div className="card">
-          <h3>ROI Paddle — Kamera 2 (pemicu tampol)</h3>
+          <h3>ROI Paddle Kamera 2 — pemicu "tampol" per servo</h3>
           <RoiEditor
-            label="Servo snap ke 0° saat buah masuk kotak & cukup ke kiri"
+            label="Servo 1 (mentah): tampol saat buah masuk kotak ini"
             streamSrc="/video/cam2"
             frameW={frameW}
             frameH={frameH}
-            value={cfg.sort_cam2.paddle_roi}
-            onChange={(v) => upd(["sort_cam2", "paddle_roi"], v)}
+            value={cfg.sort_cam2.paddle_roi_1 || cfg.sort_cam2.paddle_roi}
+            onChange={(v) => upd(["sort_cam2", "paddle_roi_1"], v)}
           />
-          {numField("Ambang 'agak ke kiri' (slap_x_ratio 0–1)", ["sort_cam2", "slap_x_ratio"], "0.01")}
+          <div style={{ height: 12 }} />
+          <RoiEditor
+            label="Servo 2 (setengah matang): tampol saat buah masuk kotak ini"
+            streamSrc="/video/cam2"
+            frameW={frameW}
+            frameH={frameH}
+            value={cfg.sort_cam2.paddle_roi_2 || cfg.sort_cam2.paddle_roi}
+            onChange={(v) => upd(["sort_cam2", "paddle_roi_2"], v)}
+          />
+          {numField("Track confidence cam2 (0–1, kecil = lebih sensitif)", ["sort_cam2", "track_conf"], "0.01")}
+          <div className="roi-hint">
+            Tip: aktifkan Mode MANUAL lalu klik "Servo1/Servo2 Open" untuk melihat posisi lengan sebelum menggambar kotak.
+          </div>
         </div>
       </div>
 

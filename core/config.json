@@ -45,14 +45,26 @@
     "matang": "straight"
   },
   "sort_cam2": {
+    "paddle_roi_1": {
+      "x": 560,
+      "y": 440,
+      "w": 440,
+      "h": 270
+    },
+    "paddle_roi_2": {
+      "x": 500,
+      "y": 80,
+      "w": 560,
+      "h": 320
+    },
     "paddle_roi": {
       "x": 520,
       "y": 37,
       "w": 368,
       "h": 663
     },
-    "slap_x_ratio": 0.45,
-    "min_box_area": 4000
+    "track_conf": 0.25,
+    "min_box_area": 3000
   },
   "serial": {
     "port": "/dev/ttyUSB0",

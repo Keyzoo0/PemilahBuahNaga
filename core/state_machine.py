@@ -185,10 +185,17 @@ class SortController:
                 "min_area": d["min_box_area"]}
 
     def _detcfg_cam2(self):
+        # tracking cam2: conf rendah + tanpa filter per-kelas agar buah yang
+        # bergerak tetap terdeteksi (posisi lebih penting daripada kelas).
         s = self.cfg.get("sort_cam2")
-        d = self.cfg.get("detect")
-        return {"conf_threshold": d["conf_threshold"], "conf_per_class": d["conf_per_class"],
-                "min_area": s["min_box_area"]}
+        track_conf = float(s.get("track_conf", 0.25))
+        return {"conf_threshold": track_conf, "conf_per_class": {}, "min_area": s["min_box_area"]}
+
+    def _active_paddle_roi(self):
+        """ROI paddle untuk servo yang sedang aktif (servo1/servo2 posisinya beda)."""
+        s = self.cfg.get("sort_cam2")
+        return (s.get(f"paddle_roi_{self._active_servo}") or s.get("paddle_roi")
+                or {"x": 0, "y": 0, "w": 999999, "h": 999999})
 
     def _infer(self, frame, det_cfg, roi):
         if frame is None:
@@ -217,7 +224,7 @@ class SortController:
             self._set_annotated("cam2", draw_overlay(self.cams.cam2.read(), [], self.cfg.get("sort_cam2", "paddle_roi"), "idle"))
 
         elif st in ("STRAIGHT_OUT", "STRAIGHT_EXTRA", "SERVO_SORT", "SERVO_RETURN"):
-            roi2 = self.cfg.get("sort_cam2", "paddle_roi")
+            roi2 = self._active_paddle_roi() if st in ("SERVO_SORT", "SERVO_RETURN") else self.cfg.get("sort_cam2", "paddle_roi")
             frame2 = self.cams.cam2.read()
             dets2 = self._infer(frame2, self._detcfg_cam2(), None)
             self._set_annotated("cam2", draw_overlay(frame2, dets2, roi2, st, self.last_message))
@@ -363,13 +370,12 @@ class SortController:
         d = best_det(dets)
         if d is None:
             return
-        roi = self.cfg.get("sort_cam2", "paddle_roi")
-        slap_ratio = float(self.cfg.get("sort_cam2", "slap_x_ratio", default=0.45))
-        w = frame.shape[1] if frame is not None else 1280
-        in_paddle = roi["x"] <= d.cx <= roi["x"] + roi["w"] and roi["y"] <= d.cy <= roi["y"] + roi["h"]
-        left_enough = (d.cx / w) < slap_ratio
-        if in_paddle and left_enough:
-            self.bridge.servo_close(self._active_servo)  # TAMPOL: kembali ke 0 derajat
+        # TAMPOL saat titik tengah buah masuk zona paddle servo yang aktif
+        roi = self._active_paddle_roi()
+        in_paddle = (roi["x"] <= d.cx <= roi["x"] + roi["w"]
+                     and roi["y"] <= d.cy <= roi["y"] + roi["h"])
+        if in_paddle:
+            self.bridge.servo_close(self._active_servo)  # kembali ke 0 derajat
             self._transition("SERVO_RETURN", f"Tampol! servo{self._active_servo} -> 0")
 
     def _state_servo_return(self):
