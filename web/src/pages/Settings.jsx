@@ -88,7 +88,8 @@ export default function Settings({ status }) {
             value={cfg.sort_cam2.paddle_roi_2 || cfg.sort_cam2.paddle_roi}
             onChange={(v) => upd(["sort_cam2", "paddle_roi_2"], v)}
           />
-          {numField("Track confidence cam2 (0–1, kecil = lebih sensitif)", ["sort_cam2", "track_conf"], "0.01")}
+          {numField("Track confidence cam2 — ambang TAMPOL (0–1, kecil = lebih sensitif)", ["sort_cam2", "track_conf"], "0.01")}
+          {numField("Draw confidence cam2 — ambang tampil di stream saja", ["sort_cam2", "track_draw_conf"], "0.01")}
           <div className="roi-hint">
             Tip: aktifkan Mode MANUAL lalu klik "Servo1/Servo2 Open" untuk melihat posisi lengan sebelum menggambar kotak.
           </div>

@@ -237,12 +237,16 @@ class SortController:
         return {"conf_threshold": d["conf_threshold"], "conf_per_class": d["conf_per_class"],
                 "min_area": d["min_box_area"]}
 
+    def _track_conf(self):
+        """Ambang confidence untuk MEMICU tampol / dianggap masih ada di frame."""
+        return float((self.cfg.get("sort_cam2") or {}).get("track_conf", 0.40))
+
     def _detcfg_cam2(self):
-        # tracking cam2: conf rendah + tanpa filter per-kelas agar buah yang
-        # bergerak tetap terdeteksi (posisi lebih penting daripada kelas).
+        # Floor deteksi sengaja rendah supaya semua kandidat tergambar di stream
+        # (memudahkan kalibrasi melihat confidence). Keputusan tampol tetap pakai track_conf.
         s = self.cfg.get("sort_cam2")
-        track_conf = float(s.get("track_conf", 0.25))
-        return {"conf_threshold": track_conf, "conf_per_class": {}, "min_area": s["min_box_area"]}
+        floor = min(self._track_conf(), float(s.get("track_draw_conf", 0.15)))
+        return {"conf_threshold": floor, "conf_per_class": {}, "min_area": s["min_box_area"]}
 
     def _active_paddle_roi(self):
         """ROI paddle untuk servo yang sedang aktif (servo1/servo2 posisinya beda)."""
@@ -415,10 +419,11 @@ class SortController:
     def _state_straight_out(self, dets):
         if self._motor_watchdog():
             return
-        if best_det(dets) is None:
-            self._empty += 1
-        else:
+        tc = self._track_conf()
+        if any(d.conf >= tc for d in dets):
             self._empty = 0
+        else:
+            self._empty += 1
         if self._empty >= int(self.cfg.get("detect", "exit_frames", default=6)):
             self._transition("STRAIGHT_EXTRA", "Keluar frame cam2, mundur tambahan")
 
@@ -432,16 +437,20 @@ class SortController:
         if self._motor_watchdog():
             self.bridge.servo_close(self._active_servo)
             return
-        d = best_det(dets)
-        if d is None:
-            return
-        # TAMPOL saat titik tengah buah masuk zona paddle servo yang aktif
+        # TAMPOL saat titik tengah buah masuk zona paddle servo yang aktif.
+        # Cek SEMUA deteksi (bukan cuma yang conf tertinggi) agar buah dengan
+        # confidence sedang tetap memicu selama >= track_conf.
         roi = self._active_paddle_roi()
-        in_paddle = (roi["x"] <= d.cx <= roi["x"] + roi["w"]
-                     and roi["y"] <= d.cy <= roi["y"] + roi["h"])
-        if in_paddle:
-            self.bridge.servo_close(self._active_servo)  # kembali ke 0 derajat
-            self._transition("SERVO_RETURN", f"Tampol! servo{self._active_servo} -> 0")
+        tc = self._track_conf()
+        for d in sorted(dets, key=lambda x: -x.conf):
+            if d.conf < tc:
+                continue
+            if (roi["x"] <= d.cx <= roi["x"] + roi["w"]
+                    and roi["y"] <= d.cy <= roi["y"] + roi["h"]):
+                self.bridge.servo_close(self._active_servo)  # kembali ke 0 derajat
+                self._transition("SERVO_RETURN",
+                                 f"Tampol! servo{self._active_servo} -> 0 (conf {d.conf:.2f})")
+                return
 
     def _state_servo_return(self):
         hold = float(self.cfg.get("timing", "servo_slap_hold_ms", default=500)) / 1000.0
