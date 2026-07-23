@@ -84,6 +84,9 @@ export default function Monitor({ status }) {
           <div className="state-msg" style={{ marginTop: 4, fontFamily: "monospace" }}>
             gerakan: {s.motion ?? "—"} · objek: {s.fg_ratio ?? "—"} · latar:{" "}
             {s.has_empty_ref ? "✓ terkalibrasi" : "⚠ belum disimpan"}
+            {s.cam2_best && (
+              <> · cam2 buah @ x={s.cam2_best.cx} y={s.cam2_best.cy} ({s.cam2_best.conf})</>
+            )}
           </div>
         </div>
         <div className="spacer" />

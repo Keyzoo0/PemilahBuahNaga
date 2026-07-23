@@ -63,6 +63,7 @@ class SortController:
         self._active_servo = 1
         self._last_motion = 0.0
         self._last_fg = None
+        self._cam2_best = None      # posisi deteksi terbaik cam2 (bantu kalibrasi ROI)
         self._led_status = None     # status indikator terakhir yang dikirim
         self._t_last_bip = 0.0      # penanda bip-bip terakhir saat sorting
 
@@ -286,6 +287,9 @@ class SortController:
             roi2 = self._active_paddle_roi() if st in ("SERVO_SORT", "SERVO_RETURN") else self.cfg.get("sort_cam2", "paddle_roi")
             frame2 = self.cams.cam2.read()
             dets2 = self._infer(frame2, self._detcfg_cam2(), None)
+            bd = best_det(dets2)
+            self._cam2_best = ({"cx": int(bd.cx), "cy": int(bd.cy), "conf": round(bd.conf, 2)}
+                               if bd is not None else None)
             self._set_annotated("cam2", draw_overlay(frame2, dets2, roi2, st, self.last_message))
             self._set_annotated("cam1", draw_overlay(self.cams.cam1.read(), [], self.cfg.get("detect", "roi"), "idle"))
 
@@ -437,6 +441,16 @@ class SortController:
         if self._motor_watchdog():
             self.bridge.servo_close(self._active_servo)
             return
+        # Jeda "lengan siap": cam1 & cam2 saling tumpang tindih, sehingga buah yang
+        # baru mulai jalan sudah terlihat cam2. Tunggu dulu supaya buah benar-benar
+        # sampai di paddle, jangan menampol angin.
+        arm_delay = float(self.cfg.get("timing", "servo_arm_delay_seconds", default=1.0))
+        waited = time.time() - self._t_state
+        if waited < arm_delay:
+            self.last_message = (f"servo{self._active_servo} terbuka, menunggu buah mendekat "
+                                 f"({waited:.1f}/{arm_delay:.1f}s)")
+            return
+
         # TAMPOL saat titik tengah buah masuk zona paddle servo yang aktif.
         # Cek SEMUA deteksi (bukan cuma yang conf tertinggi) agar buah dengan
         # confidence sedang tetap memicu selama >= track_conf.
@@ -541,6 +555,7 @@ class SortController:
             "cam2_ok": self.cams.cam2.healthy(),
             "cam1_fps": round(self.cams.cam1.actual_fps, 1),
             "cam2_fps": round(self.cams.cam2.actual_fps, 1),
+            "cam2_best": self._cam2_best,   # {cx,cy,conf} untuk kalibrasi ROI paddle
             "indicator": self._led_status,  # ready(hijau)/busy(merah)/notready(kuning)
             "has_empty_ref": self._empty_ref is not None,
             "motion": round(self._last_motion, 1),

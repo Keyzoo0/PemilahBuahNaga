@@ -143,6 +143,7 @@ export default function Settings({ status }) {
         </div>
         <div className="row4">
           {numField("Reject: durasi maju buang (dtk)", ["timing", "reject_forward_seconds"], "0.5")}
+          {numField("Jeda lengan siap sebelum boleh tampol (dtk)", ["timing", "servo_arm_delay_seconds"], "0.1")}
         </div>
       </div>
 

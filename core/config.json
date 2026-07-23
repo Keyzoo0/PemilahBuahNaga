@@ -37,7 +37,8 @@
     "cooldown_seconds": 3,
     "max_motor_runtime_seconds": 15,
     "fault_auto_reset_seconds": 5,
-    "reject_forward_seconds": 4
+    "reject_forward_seconds": 4,
+    "servo_arm_delay_seconds": 1.0
   },
   "mapping": {
     "mentah": "servo1",
@@ -52,10 +53,10 @@
       "h": 280
     },
     "paddle_roi_2": {
-      "x": 12,
-      "y": 43,
-      "w": 778,
-      "h": 182
+      "x": 53,
+      "y": 56,
+      "w": 841,
+      "h": 308
     },
     "paddle_roi": {
       "x": 520,
@@ -63,8 +64,8 @@
       "w": 368,
       "h": 663
     },
-    "track_conf": 0.4,
-    "track_draw_conf": 0.15,
+    "track_conf": 0.3,
+    "track_draw_conf": 0.3,
     "min_box_area": 3000
   },
   "serial": {
