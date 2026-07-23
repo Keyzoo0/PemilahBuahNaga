@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getHistory, getClasses } from "../api.js";
+import { getHistory, getClasses, deleteHistory, clearHistory } from "../api.js";
 
 const RIPE_CLASS = {
   matang: "ripe-matang",
@@ -133,7 +133,21 @@ export default function Monitor({ status }) {
       </div>
 
       <div className="card">
-        <h3>Riwayat Sortasi Terbaru</h3>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>Riwayat Sortasi Terbaru</h3>
+          <span className="spacer" style={{ flex: 1 }} />
+          <button
+            className="btn sm"
+            onClick={async () => {
+              if (confirm("Hapus SEMUA riwayat sortasi?")) {
+                await clearHistory();
+                setHistory([]);
+              }
+            }}
+          >
+            🗑 Hapus Semua
+          </button>
+        </div>
         <div style={{ overflowX: "auto" }}>
           <table>
             <thead>
@@ -143,12 +157,13 @@ export default function Monitor({ status }) {
                 <th>Kematangan</th>
                 <th>Conf</th>
                 <th>Aksi</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {history.length === 0 && (
                 <tr>
-                  <td colSpan="5" style={{ color: "var(--text-dim)" }}>
+                  <td colSpan="6" style={{ color: "var(--text-dim)" }}>
                     Belum ada data hari ini.
                   </td>
                 </tr>
@@ -166,6 +181,18 @@ export default function Monitor({ status }) {
                   </td>
                   <td>{r.confidence ?? "-"}</td>
                   <td>{r.action || "-"}</td>
+                  <td>
+                    <button
+                      className="btn sm"
+                      title="Hapus baris ini"
+                      onClick={async () => {
+                        await deleteHistory(r.id);
+                        setHistory((h) => h.filter((x) => x.id !== r.id));
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from "react";
 import Monitor from "./pages/Monitor.jsx";
 import Settings from "./pages/Settings.jsx";
+import Dataset from "./pages/Dataset.jsx";
+import Annotate from "./pages/Annotate.jsx";
+import Training from "./pages/Training.jsx";
 import { subscribeStatus, estop, clearEstop, setMode } from "./api.js";
 
 export default function App() {
   const [tab, setTab] = useState("monitor");
   const [status, setStatus] = useState(null);
+  const [annotateImg, setAnnotateImg] = useState(null);
 
   useEffect(() => subscribeStatus(setStatus), []);
 
@@ -27,6 +31,15 @@ export default function App() {
           </button>
           <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>
             Kalibrasi
+          </button>
+          <button className={tab === "dataset" ? "active" : ""} onClick={() => setTab("dataset")}>
+            Dataset
+          </button>
+          <button className={tab === "annotate" ? "active" : ""} onClick={() => setTab("annotate")}>
+            Anotasi
+          </button>
+          <button className={tab === "training" ? "active" : ""} onClick={() => setTab("training")}>
+            Training
           </button>
         </div>
 
@@ -56,7 +69,18 @@ export default function App() {
         )}
       </div>
 
-      {tab === "monitor" ? <Monitor status={status} /> : <Settings status={status} />}
+      {tab === "monitor" && <Monitor status={status} />}
+      {tab === "settings" && <Settings status={status} />}
+      {tab === "dataset" && (
+        <Dataset
+          onAnnotate={(name) => {
+            setAnnotateImg(name);
+            setTab("annotate");
+          }}
+        />
+      )}
+      {tab === "annotate" && <Annotate initial={annotateImg} />}
+      {tab === "training" && <Training />}
     </div>
   );
 }

@@ -108,6 +108,103 @@ def api_history(limit: int = 100):
     return {"rows": store.recent(limit)}
 
 
+@app.delete("/api/history/{row_id}")
+def api_history_delete(row_id: int):
+    from store import store
+    store.delete(row_id)
+    return {"ok": True}
+
+
+@app.delete("/api/history")
+def api_history_clear():
+    from store import store
+    return {"ok": True, "deleted": store.clear_all()}
+
+
+# =========================================================
+# DATASET / ANOTASI / TRAINING
+# =========================================================
+@app.get("/api/dataset/list")
+def api_ds_list():
+    import dataset as ds
+    return {"images": ds.list_images(), "stats": ds.stats(), "classes": ds.CLASSES}
+
+
+@app.post("/api/dataset/capture")
+def api_ds_capture():
+    import dataset as ds
+    frame = ctx["controller"].cams.cam1.read()
+    name = ds.capture(frame)
+    if not name:
+        return JSONResponse({"ok": False, "message": "Frame kamera 1 belum tersedia"}, status_code=400)
+    return {"ok": True, "name": name}
+
+
+@app.delete("/api/dataset/image/{name}")
+def api_ds_delete(name: str):
+    import dataset as ds
+    ds.delete_image(name)
+    return {"ok": True}
+
+
+@app.get("/api/dataset/label/{name}")
+def api_ds_get_label(name: str):
+    import dataset as ds
+    return {"boxes": ds.get_label(name)}
+
+
+@app.post("/api/dataset/label/{name}")
+async def api_ds_save_label(name: str, request: Request):
+    import dataset as ds
+    data = await request.json()
+    n = ds.save_label(name, data.get("boxes", []))
+    return {"ok": True, "saved": n}
+
+
+@app.post("/api/train/start")
+async def api_train_start(request: Request):
+    import dataset as ds
+    body = await request.json() if await request.body() else {}
+    # sorting dialihkan ke MANUAL supaya CPU tidak berebut dengan training
+    ctx["controller"].set_manual(True)
+    ok, msg = ds.trainer.start(
+        epochs=int(body.get("epochs", 40)),
+        imgsz=int(body.get("imgsz", 416)),
+        batch=int(body.get("batch", 8)),
+        freeze=int(body.get("freeze", 10)),
+    )
+    if not ok:
+        ctx["controller"].set_manual(False)
+        return JSONResponse({"ok": False, "message": msg}, status_code=400)
+    return {"ok": True, "run": msg}
+
+
+@app.get("/api/train/status")
+def api_train_status():
+    import dataset as ds
+    return ds.trainer.status()
+
+
+@app.post("/api/train/stop")
+def api_train_stop():
+    import dataset as ds
+    return {"ok": ds.trainer.stop()}
+
+
+@app.get("/api/models")
+def api_models():
+    import dataset as ds
+    return {"models": ds.list_models()}
+
+
+@app.post("/api/models/activate")
+async def api_models_activate(request: Request):
+    import dataset as ds
+    data = await request.json()
+    ok, msg = ds.activate_model(data.get("path", ""))
+    return {"ok": ok, "message": msg + (" — restart service untuk memuat model baru." if ok else "")}
+
+
 @app.websocket("/ws")
 async def ws(websocket):
     await websocket.accept()
@@ -121,6 +218,9 @@ async def ws(websocket):
 
 # static uploads (snapshot)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+# gambar dataset (untuk galeri & anotasi)
+(BASE_DIR / "dataset" / "images").mkdir(parents=True, exist_ok=True)
+app.mount("/dsimg", StaticFiles(directory=str(BASE_DIR / "dataset" / "images")), name="dsimg")
 
 # web build (Vite) kalau sudah ada; kalau belum, tampilkan info
 if WEB_DIST.exists():

@@ -44,6 +44,42 @@ export const setMode = (manual) => post("/api/mode", { manual });
 export const manualCmd = (cmd) => post("/api/manual", { cmd });
 export const calibrateEmpty = () => post("/api/calibrate/empty");
 
+async function del(path) {
+  const r = await fetch(path, { method: "DELETE" });
+  return r.json();
+}
+
+// riwayat
+export const deleteHistory = (id) => del(`/api/history/${id}`);
+export const clearHistory = () => del("/api/history");
+
+// dataset
+export async function dsList() {
+  const r = await fetch("/api/dataset/list");
+  return r.json();
+}
+export const dsCapture = () => post("/api/dataset/capture");
+export const dsDelete = (name) => del(`/api/dataset/image/${encodeURIComponent(name)}`);
+export async function dsGetLabel(name) {
+  const r = await fetch(`/api/dataset/label/${encodeURIComponent(name)}`);
+  return r.json();
+}
+export const dsSaveLabel = (name, boxes) =>
+  post(`/api/dataset/label/${encodeURIComponent(name)}`, { boxes });
+
+// training
+export const trainStart = (params) => post("/api/train/start", params);
+export const trainStop = () => post("/api/train/stop");
+export async function trainStatus() {
+  const r = await fetch("/api/train/status");
+  return r.json();
+}
+export async function listModels() {
+  const r = await fetch("/api/models");
+  return r.json();
+}
+export const activateModel = (path) => post("/api/models/activate", { path });
+
 // WebSocket status dengan auto-reconnect + fallback polling.
 export function subscribeStatus(onData) {
   let ws,

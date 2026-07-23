@@ -47,6 +47,19 @@ class Store:
             rows = c.execute("SELECT * FROM sortings ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
 
+    def delete(self, row_id):
+        with self.lock, self._conn() as c:
+            c.execute("DELETE FROM sortings WHERE id=?", (row_id,))
+            c.commit()
+            return True
+
+    def clear_all(self):
+        with self.lock, self._conn() as c:
+            n = c.execute("SELECT COUNT(*) n FROM sortings").fetchone()["n"]
+            c.execute("DELETE FROM sortings")
+            c.commit()
+            return n
+
     def counts_today(self):
         today = datetime.now().strftime("%Y-%m-%d")
         with self.lock, self._conn() as c:

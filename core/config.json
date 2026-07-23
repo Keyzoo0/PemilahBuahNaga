@@ -27,22 +27,22 @@
     "settle_frames": 8,
     "fg_pixel_threshold": 30,
     "fg_area_ratio": 0.04,
-    "settle_timeout_seconds": 8.0,
+    "settle_timeout_seconds": 8,
     "max_consecutive_rejects": 3
   },
   "timing": {
     "forward_extra_seconds": 2,
-    "backward_extra_matang_seconds": 5,
+    "backward_extra_matang_seconds": 2,
     "servo_open_angle": 51,
     "servo_close_angle": 0,
     "servo_slap_hold_ms": 500,
-    "cooldown_seconds": 3,
+    "cooldown_seconds": 1,
     "max_motor_runtime_seconds": 15,
     "fault_auto_reset_seconds": 5,
     "reject_forward_seconds": 4,
     "servo_arm_delay_seconds": 1,
-    "servo_arm_delay_1": 1.0,
-    "servo_arm_delay_2": 1.0
+    "servo_arm_delay_1": 1,
+    "servo_arm_delay_2": 1
   },
   "mapping": {
     "mentah": "servo1",
@@ -51,16 +51,16 @@
   },
   "sort_cam2": {
     "paddle_roi_1": {
-      "x": 12,
-      "y": 431,
-      "w": 770,
-      "h": 280
+      "x": 256,
+      "y": 371,
+      "w": 670,
+      "h": 223
     },
     "paddle_roi_2": {
-      "x": 53,
-      "y": 56,
-      "w": 841,
-      "h": 308
+      "x": 98,
+      "y": 30,
+      "w": 847,
+      "h": 399
     },
     "paddle_roi": {
       "x": 520,

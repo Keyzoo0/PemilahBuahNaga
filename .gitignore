@@ -7,3 +7,8 @@ web/node_modules/
 web/dist/
 *.log
 core/empty_ref.jpg
+core/dataset/images/
+core/dataset/labels/
+core/dataset/_build/
+core/runs/
+core/models/
