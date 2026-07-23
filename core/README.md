@@ -14,13 +14,15 @@ semua jalan di Raspberry Pi 5 sebagai systemd service. Web hanya untuk monitorin
 | `serial_bridge.py` | Serial Arduino: auto-reconnect + heartbeat (`ping`,`watchdog on`) |
 | `store.py` | SQLite riwayat sortasi |
 | `api.py` | FastAPI: stream MJPEG, WebSocket status, GET/POST config, E-STOP |
+| `mdns.py` | Publikasi `buahnaga.local` via Zeroconf |
 
 ## Jalankan manual (test)
 ```bash
 cd ~/PemilahBuahNaga/core
 ./run.sh
-# buka http://<ip-pi>:8000/api/status
+# buka http://buahnaga.local:5000   (atau http://<ip-pi>:5000)
 ```
+Port & hostname mDNS diatur di `config.json` bagian `web` (default `buahnaga` : `5000`).
 
 ## Pasang sebagai service (auto-start saat boot)
 ```bash

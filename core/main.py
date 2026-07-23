@@ -11,6 +11,7 @@ from camera import CameraManager
 from detector import YOLODetector
 from serial_bridge import SerialBridge
 from state_machine import SortController
+from mdns import MDNSPublisher
 import api
 
 
@@ -43,5 +44,21 @@ def build():
 
 if __name__ == "__main__":
     build()
-    print("[CORE] Web API: http://0.0.0.0:8000  (monitoring & kalibrasi)")
-    uvicorn.run(api.app, host="0.0.0.0", port=8000, log_level="warning")
+
+    web = config.get("web", default={}) or {}
+    port = int(web.get("port", 5000))
+    hostname = web.get("mdns_hostname", "buahnaga")
+
+    # publikasikan mDNS: http://buahnaga.local:5000
+    mdns = MDNSPublisher(hostname=hostname, port=port)
+    try:
+        host_local = mdns.start()
+    except Exception as exc:
+        host_local = f"{hostname}.local"
+        print(f"[mDNS] gagal publish ({exc}); akses tetap via IP:{port}")
+
+    print(f"[CORE] Web: http://{host_local}:{port}  (monitoring & kalibrasi)")
+    try:
+        uvicorn.run(api.app, host="0.0.0.0", port=port, log_level="warning")
+    finally:
+        mdns.stop()

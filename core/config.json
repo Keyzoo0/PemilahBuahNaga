@@ -47,5 +47,9 @@
   },
   "system": {
     "save_snapshots": true
+  },
+  "web": {
+    "port": 5000,
+    "mdns_hostname": "buahnaga"
   }
 }

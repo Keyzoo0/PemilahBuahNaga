@@ -21,6 +21,7 @@ laptop dan tanpa perlu membuka web.
 - 🔀 **Sortasi otomatis** via 2 lengan servo + konveyor (motor L298N) dengan mekanisme "tampol".
 - 🧠 **State machine** lengkap dengan **failsafe**: watchdog motor, auto-reconnect serial, E-STOP.
 - 🌐 **Web monitoring & kalibrasi** (offline/LAN): stream langsung, editor ROI visual, hot-reload config.
+- 🔎 **mDNS** — akses langsung di **`http://buahnaga.local:5000`** tanpa perlu tahu alamat IP.
 - 🔌 **Identifikasi kamera by USB bus-key** — cam1/cam2 tidak pernah tertukar walau reboot.
 - ⚙️ **Systemd service** — otomatis menyala saat boot.
 
@@ -129,6 +130,7 @@ PemilahBuahNaga/
 │  ├─ serial_bridge.py   # serial Arduino (auto-reconnect + heartbeat)
 │  ├─ store.py           # SQLite riwayat
 │  ├─ api.py             # FastAPI + WebSocket + MJPEG
+│  ├─ mdns.py            # publikasi buahnaga.local (Zeroconf)
 │  ├─ pemilah-core.service            # unit systemd
 │  └─ best.pt            # model YOLOv8
 ├─ web/                                # Vite + React (monitor & kalibrasi)
@@ -165,7 +167,10 @@ cd web && npm install && npm run build   # hasil ke web/dist, di-serve otomatis 
 ### 4. Jalankan
 ```bash
 ./core/run.sh                # manual
-# buka http://<ip-raspi>:8000
+```
+Buka di browser (HP/laptop dalam satu jaringan), tanpa perlu tahu IP berkat **mDNS**:
+```
+http://buahnaga.local:5000
 ```
 
 ### 5. Auto-start saat boot (systemd)
