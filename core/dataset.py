@@ -218,8 +218,14 @@ class Trainer:
         rc = self.proc.wait()
         self.running = False
         if rc == 0:
-            best = RUNS_DIR / self.params.get("run", "") / "weights" / "best.pt"
-            if best.exists():
+            # ultralytics bisa menyisipkan subfolder (mis. detect/) -> cari rekursif
+            run = self.params.get("run", "")
+            best = next(RUNS_DIR.rglob(f"{run}/weights/best.pt"), None)
+            if best is None:  # fallback: best.pt terbaru
+                cands = sorted(RUNS_DIR.rglob("*/weights/best.pt"),
+                               key=lambda p: p.stat().st_mtime, reverse=True)
+                best = cands[0] if cands else None
+            if best is not None and best.exists():
                 self.result_model = str(best)
                 self._append(f"[OK] Model selesai: {best}")
             else:
@@ -272,7 +278,7 @@ def activate_model(path):
 
 def list_models():
     out = []
-    for p in sorted(RUNS_DIR.glob("*/weights/best.pt")):
+    for p in RUNS_DIR.rglob("*/weights/best.pt"):  # rekursif: tahan subfolder ultralytics
         out.append({"path": str(p), "run": p.parent.parent.name,
                     "size_mb": round(p.stat().st_size / 1e6, 1),
                     "mtime": datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")})
