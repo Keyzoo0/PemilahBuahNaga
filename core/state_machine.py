@@ -60,6 +60,8 @@ class SortController:
         self._prev_gray = None      # untuk deteksi gerakan
         self._t_state = time.time()
         self._t_motor = 0.0
+        self._t_motor_cmd = 0.0     # kirim-ulang perintah motor (anti perintah hilang)
+        self._motor_dir = None      # 'forward' / 'backward' / None
         self._snapshot_path = None
         self._active_servo = 1
         self._last_motion = 0.0
@@ -117,7 +119,7 @@ class SortController:
         print(f"[SM] -> {state} :: {self.last_message}")
 
     def _enter_fault(self, reason):
-        self.bridge.motor_stop()
+        self._stop_motor()
         self.bridge.s1_close()
         self.bridge.s2_close()
         self.fault_count += 1
@@ -129,6 +131,30 @@ class SortController:
             self._enter_fault("motor melebihi batas waktu (objek tidak terdeteksi keluar)")
             return True
         return False
+
+    def _run_motor(self, direction):
+        """Mulai motor + tandai arah agar terus dikirim ulang."""
+        self._motor_dir = direction
+        self._t_motor = time.time()
+        self._t_motor_cmd = 0.0  # paksa kirim segera di _keep_motor
+        self._keep_motor()
+
+    def _keep_motor(self):
+        """Kirim ULANG perintah motor tiap 0.5s selama fase gerak. Mencegah buah
+        'nyangkut' gara-gara satu perintah motor hilang di serial (glitch USB)."""
+        if self._motor_dir is None:
+            return
+        now = time.time()
+        if now - self._t_motor_cmd >= 0.5:
+            if self._motor_dir == "backward":
+                self.bridge.motor_backward()
+            elif self._motor_dir == "forward":
+                self.bridge.motor_forward()
+            self._t_motor_cmd = now
+
+    def _stop_motor(self):
+        self._motor_dir = None
+        self.bridge.motor_stop()
 
     # ---------------------------------------------------------
     # INDIKATOR LED & BUZZER (status sistem)
@@ -349,7 +375,8 @@ class SortController:
     # IDLE + GERBANG SETTLE (anti-tangan)
     # ---------------------------------------------------------
     def _state_idle(self, frame):
-        self.bridge.motor_stop()
+        if self._motor_dir is not None:
+            self._stop_motor()
         if frame is None:
             self.last_message = "Menunggu frame kamera 1..."
             return
@@ -451,8 +478,7 @@ class SortController:
         action = (self.cfg.get("mapping", default={}) or {}).get(self.ripeness, "straight")
         self.last_action = action
         self._empty = 0
-        self.bridge.motor_backward()       # BUAH NAGA -> mundur ke servo (bukan forward!)
-        self._t_motor = time.time()
+        self._run_motor("backward")        # BUAH NAGA -> mundur ke servo (bukan forward!)
         if action == "straight":
             # pastikan kedua servo TERTUTUP agar buah matang tak terganjal lengan
             self.bridge.s1_close()
@@ -482,19 +508,18 @@ class SortController:
         self._consec_rejects += 1
         self.ripeness = "bukan buah naga"
         self.last_action = "reject"
-        self.bridge.motor_forward()        # REJECT -> maju buang
-        self._t_motor = time.time()
+        self._run_motor("forward")         # REJECT -> maju buang
         self._transition("REJECT_FORWARD", "Bukan buah naga: maju untuk dibuang")
 
     # ---------------------------------------------------------
     def _state_reject(self, frame):
         if self._motor_watchdog():
             return
-        # tampilkan
+        self._keep_motor()  # jaga motor tetap maju (anti perintah hilang)
         self._set_annotated("cam1", draw_overlay(frame, [], self.cfg.get("detect", "roi"), "REJECT_FORWARD", self.last_message))
         dur = float(self.cfg.get("timing", "reject_forward_seconds", default=4.0))
         if time.time() - self._t_state >= dur:
-            self.bridge.motor_stop()
+            self._stop_motor()
             store.add(self.ripeness, None, "reject", self._snapshot_path)
             self._transition("COOLDOWN", "Objek reject dibuang")
 
@@ -508,11 +533,12 @@ class SortController:
         # tindih & belt bertekstur).
         if self._motor_watchdog():
             return
+        self._keep_motor()  # jaga motor tetap mundur (anti perintah hilang)
         dur = float(self.cfg.get("timing", "backward_extra_matang_seconds", default=6.0))
         remain = dur - (time.time() - self._t_state)
         self.last_message = f"matang: mundur lurus keluar ({remain:.1f}s lagi)"
         if remain <= 0:
-            self.bridge.motor_stop()
+            self._stop_motor()
             self._goto_cooldown()
 
     def _state_servo_sort(self, frame2):
@@ -522,6 +548,7 @@ class SortController:
         if self._motor_watchdog():
             self.bridge.servo_close(self._active_servo)
             return
+        self._keep_motor()  # jaga motor tetap mundur (anti perintah hilang)
         s = self.cfg.get("sort_cam2") or {}
         blind = float(s.get("blind_spot_seconds", 2.0))
         elapsed = time.time() - self._t_state
@@ -548,7 +575,7 @@ class SortController:
     def _state_servo_return(self):
         hold = float(self.cfg.get("timing", "servo_slap_hold_ms", default=500)) / 1000.0
         if time.time() - self._t_state >= hold:
-            self.bridge.motor_stop()
+            self._stop_motor()
             self._goto_cooldown()
 
     def _goto_cooldown(self):
@@ -557,7 +584,7 @@ class SortController:
         self._transition("COOLDOWN", f"Selesai: {self.ripeness} -> {self.last_action}")
 
     def _state_cooldown(self):
-        self.bridge.motor_stop()
+        self._stop_motor()
         self.bridge.s1_close()
         self.bridge.s2_close()
         if time.time() - self._t_state >= float(self.cfg.get("timing", "cooldown_seconds", default=3.0)):
@@ -588,7 +615,7 @@ class SortController:
         print("[SM] latar belt kosong di-refresh otomatis")
 
     def _state_fault(self):
-        self.bridge.motor_stop()
+        self._stop_motor()
         auto = float(self.cfg.get("timing", "fault_auto_reset_seconds", default=5.0))
         if time.time() - self._t_state >= auto:
             self._reset_cycle()
@@ -609,6 +636,7 @@ class SortController:
         self._settle_low = 0
         self._empty = 0
         self._t_motor = 0.0
+        self._motor_dir = None
         self._prev_gray = None
         self._snapshot_path = None
 
@@ -626,7 +654,7 @@ class SortController:
     # ---------------------------------------------------------
     def trigger_estop(self):
         self.estop = True
-        self.bridge.motor_stop()
+        self._stop_motor()
         self.bridge.s1_close()
         self.bridge.s2_close()
         self.last_message = "E-STOP ditekan"
@@ -639,7 +667,7 @@ class SortController:
     def set_manual(self, on):
         self.manual_mode = bool(on)
         if on:
-            self.bridge.motor_stop()
+            self._stop_motor()
             self.last_message = "Mode MANUAL — otomatis ditahan"
         else:
             self._reset_cycle()
