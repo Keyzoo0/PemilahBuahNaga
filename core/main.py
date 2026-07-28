@@ -20,10 +20,13 @@ def build():
     print("  PemilahBuahNaga — Core Service")
     print("=" * 56)
 
+    # Muat model YOLO DULU (berat, ~detik) sebelum start kamera, agar init
+    # kamera tidak berebut CPU dengan loading model (penyebab verifikasi frame
+    # timeout -> salah satu kamera gagal init).
+    detector = YOLODetector()
+
     cams = CameraManager(config)
     cams.start()
-
-    detector = YOLODetector()
 
     scfg = config.get("serial")
     bridge = SerialBridge(

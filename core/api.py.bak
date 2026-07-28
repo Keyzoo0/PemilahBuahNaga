@@ -3,6 +3,7 @@ FastAPI — monitoring + kalibrasi. Di-serve dari Pi (offline/LAN).
 State machine tetap jalan lewat SortController walau API tak diakses.
 """
 import asyncio
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -18,76 +19,24 @@ app = FastAPI(title="PemilahBuahNaga Core")
 ctx = {"controller": None, "bridge": None, "config": None}
 
 
-# =========================================================
-# MJPEG STREAMING
-#
-# Versi lama: `def mjpeg(key)` — generator SYNC, `while True`, `time.sleep(0.06)`,
-# tanpa cek client disconnect. Starlette menjalankan generator sync di threadpool
-# AnyIO yang kapasitasnya cuma 40 thread. Tiap stream menahan satu slot dan tidak
-# pernah melepasnya, jadi tiap refresh browser menambah 2 slot (cam1+cam2) sampai
-# habis — lalu SEMUA endpoint sync (/api/status, /api/history, file statis) ikut
-# macet. Itu penyebab "web lag lalu tidak bisa dibuka".
-#
-# Versi ini async: jalan di event loop, nol pemakaian threadpool, dan berhenti
-# sendiri saat klien pergi.
-# =========================================================
-
-# Batas stream serentak sebagai jaring pengaman terakhir.
-MAX_STREAMS = 6
-_active_streams = 0
-
-
-async def mjpeg(key, request: Request):
-    global _active_streams
-    _active_streams += 1
+def mjpeg(key):
     controller = ctx["controller"]
     boundary = b"--frame\r\n"
-    last = None  # referensi frame terakhir; ditahan supaya perbandingan `is` sah
-    try:
-        while True:
-            # klien menutup tab / pindah halaman -> hentikan stream
-            if await request.is_disconnected():
-                break
-
-            jpg = controller.get_jpeg(key) if controller else None
-            # Kirim hanya kalau frame benar-benar baru. State machine membuat
-            # objek bytes baru tiap encode, jadi identitas objek = frame baru.
-            # Ini mencegah socket dibanjiri frame duplikat saat kamera lambat.
-            if jpg is not None and jpg is not last:
-                last = jpg
-                yield boundary + b"Content-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n"
-
-            await asyncio.sleep(0.06)
-    finally:
-        # jalan juga saat generator dibatalkan (disconnect/shutdown)
-        _active_streams -= 1
-
-
-def _stream(key, request):
-    if _active_streams >= MAX_STREAMS:
-        return JSONResponse(
-            {"ok": False, "message": f"Stream aktif sudah {MAX_STREAMS}. Tutup tab lain lalu coba lagi."},
-            status_code=503,
-        )
-    return StreamingResponse(
-        mjpeg(key, request), media_type="multipart/x-mixed-replace; boundary=frame"
-    )
+    while True:
+        jpg = controller.get_jpeg(key) if controller else None
+        if jpg:
+            yield boundary + b"Content-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n"
+        time.sleep(0.06)
 
 
 @app.get("/video/cam1")
-async def video_cam1(request: Request):
-    return _stream("cam1", request)
+def video_cam1():
+    return StreamingResponse(mjpeg("cam1"), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
 @app.get("/video/cam2")
-async def video_cam2(request: Request):
-    return _stream("cam2", request)
-
-
-@app.get("/api/streams")
-async def api_streams():
-    """Diagnostik: berapa stream MJPEG yang sedang aktif."""
-    return {"active": _active_streams, "max": MAX_STREAMS}
+def video_cam2():
+    return StreamingResponse(mjpeg("cam2"), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
 @app.get("/api/status")

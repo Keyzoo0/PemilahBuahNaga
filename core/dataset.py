@@ -11,6 +11,7 @@ Prinsip agar RINGAN:
   - Training jalan sebagai SUBPROCESS ber-'nice' agar web tetap responsif,
     dan sorting otomatis dialihkan ke MANUAL supaya CPU tidak berebut.
 """
+import sys
 import json
 import os
 import random
@@ -188,7 +189,10 @@ class Trainer:
                            "freeze": freeze, "base": base, "run": run_name,
                            "train_imgs": n_train, "val_imgs": n_val}
 
-            venv_py = str((BASE_DIR.parent / ".venv" / "bin" / "python").resolve())
+            # sys.executable = python venv yang SEDANG menjalankan service.
+            # Jangan pakai .resolve() (mengikuti symlink -> /usr/bin/python sistem
+            # yang TIDAK punya ultralytics). Ini penyebab 'module not found'.
+            venv_py = sys.executable
             code = (
                 "from ultralytics import YOLO;"
                 "import torch; torch.set_num_threads(4);"

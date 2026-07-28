@@ -88,11 +88,13 @@ export default function Settings({ status }) {
             value={cfg.sort_cam2.paddle_roi_2 || cfg.sort_cam2.paddle_roi}
             onChange={(v) => upd(["sort_cam2", "paddle_roi_2"], v)}
           />
-          {numField("Track confidence cam2 — ambang TAMPOL (0–1, kecil = lebih sensitif)", ["sort_cam2", "track_conf"], "0.01")}
-          {numField("Draw confidence cam2 — ambang tampil di stream saja", ["sort_cam2", "track_draw_conf"], "0.01")}
-          {numField("Jarak tempuh minimum sebelum tampol (px)", ["sort_cam2", "min_travel_px"], "10")}
+          {numField("Sensitivitas tampol — rasio area berubah (0–1, kecil = lebih sensitif)", ["sort_cam2", "slap_area_ratio"], "0.01")}
+          {numField("Frame berturut sebelum tampol", ["sort_cam2", "slap_frames"], "1")}
+          {numField("Ambang beda piksel", ["sort_cam2", "slap_pixel_threshold"], "1")}
           <div className="roi-hint">
-            Tip: aktifkan Mode MANUAL lalu klik "Servo1/Servo2 Open" untuk melihat posisi lengan sebelum menggambar kotak.
+            Cara kerja simpel: begitu ADA PERUBAHAN WARNA di dalam kotak paddle (buah masuk),
+            servo langsung menampol. Servo 1 (mentah) = kotak BAWAH, Servo 2 (setengah) = kotak ATAS.
+            Lihat nilai "paddle" di tab Monitor saat kalibrasi.
           </div>
         </div>
       </div>
@@ -131,21 +133,16 @@ export default function Settings({ status }) {
       <div className="card" style={{ marginBottom: 16 }}>
         <h3>Timing & Aktuator</h3>
         <div className="row4">
-          {numField("Forward setelah keluar (dtk)", ["timing", "forward_extra_seconds"], "0.1")}
           {numField("Backward matang (dtk)", ["timing", "backward_extra_matang_seconds"], "0.1")}
           {numField("Servo open (°)", ["timing", "servo_open_angle"], "1")}
           {numField("Servo close (°)", ["timing", "servo_close_angle"], "1")}
+          {numField("Servo slap hold (ms)", ["timing", "servo_slap_hold_ms"], "10")}
         </div>
         <div className="row4">
-          {numField("Servo slap hold (ms)", ["timing", "servo_slap_hold_ms"], "10")}
           {numField("Cooldown (dtk)", ["timing", "cooldown_seconds"], "0.1")}
           {numField("Max motor runtime (dtk)", ["timing", "max_motor_runtime_seconds"], "0.5")}
           {numField("Fault auto-reset (dtk)", ["timing", "fault_auto_reset_seconds"], "0.5")}
-        </div>
-        <div className="row4">
           {numField("Reject: durasi maju buang (dtk)", ["timing", "reject_forward_seconds"], "0.5")}
-          {numField("Jeda lengan siap SERVO 1 (dtk)", ["timing", "servo_arm_delay_1"], "0.1")}
-          {numField("Jeda lengan siap SERVO 2 (dtk)", ["timing", "servo_arm_delay_2"], "0.1")}
         </div>
       </div>
 

@@ -64,11 +64,12 @@ class SortController:
         self._active_servo = 1
         self._last_motion = 0.0
         self._last_fg = None
-        self._sort_start_pos = None # posisi awal buah di cam2 saat sorting mulai
+        self._paddle_baseline = None  # ROI paddle kosong saat sorting mulai
+        self._slap_hits = 0           # frame berturut ada perubahan di paddle
+        self._last_paddle_change = 0.0
         self._consec_rejects = 0    # pengaman: cegah loop reject tanpa henti
         self._t_watch_start = 0.0   # kapan mulai mengawasi (anti-deadlock settle)
         self._last_fruit = None     # (label, conf) buah terakhir terlihat saat watch
-        self._cam2_best = None      # posisi deteksi terbaik cam2 (bantu kalibrasi ROI)
         self._led_status = None     # status indikator terakhir yang dikirim
         self._t_last_bip = 0.0      # penanda bip-bip terakhir saat sorting
 
@@ -137,7 +138,7 @@ class SortController:
     #   transisi ke HIJAU = bip panjang 1.5 detik
     # ---------------------------------------------------------
     _LED_BY_STATUS = {"ready": "green", "busy": "red", "notready": "yellow"}
-    _BUSY_STATES = ("REJECT_FORWARD", "STRAIGHT_OUT", "STRAIGHT_EXTRA",
+    _BUSY_STATES = ("REJECT_FORWARD", "STRAIGHT_OUT",
                     "SERVO_SORT", "SERVO_RETURN", "COOLDOWN")
 
     def _indicator_status(self):
@@ -268,31 +269,39 @@ class SortController:
         return {"conf_threshold": d["conf_threshold"], "conf_per_class": d["conf_per_class"],
                 "min_area": d["min_box_area"]}
 
-    def _track_conf(self):
-        """Ambang confidence untuk MEMICU tampol / dianggap masih ada di frame."""
-        return float((self.cfg.get("sort_cam2") or {}).get("track_conf", 0.40))
-
-    def _detcfg_cam2(self):
-        # Floor deteksi sengaja rendah supaya semua kandidat tergambar di stream
-        # (memudahkan kalibrasi melihat confidence). Keputusan tampol tetap pakai track_conf.
-        s = self.cfg.get("sort_cam2")
-        floor = min(self._track_conf(), float(s.get("track_draw_conf", 0.15)))
-        return {"conf_threshold": floor, "conf_per_class": {}, "min_area": s["min_box_area"]}
-
-    def _arm_delay(self):
-        """Jeda sebelum boleh menampol. Bisa beda per servo karena jarak
-        tempuh buah ke tiap lengan berbeda."""
-        t = self.cfg.get("timing") or {}
-        key = f"servo_arm_delay_{self._active_servo}"
-        if key in t:
-            return float(t[key])
-        return float(t.get("servo_arm_delay_seconds", 1.0))
-
     def _active_paddle_roi(self):
-        """ROI paddle untuk servo yang sedang aktif (servo1/servo2 posisinya beda)."""
+        """ROI paddle servo aktif. servo1(mentah)=paddle_roi_1, servo2(setengah)=paddle_roi_2."""
         s = self.cfg.get("sort_cam2")
         return (s.get(f"paddle_roi_{self._active_servo}") or s.get("paddle_roi")
                 or {"x": 0, "y": 0, "w": 999999, "h": 999999})
+
+    def _gray_roi(self, frame, roi):
+        """Grayscale kecil (ukuran tetap) dari sebuah ROI, untuk banding perubahan."""
+        if frame is None or roi is None:
+            return None
+        x, y, w, h = int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
+        x, y = max(0, x), max(0, y)
+        crop = frame[y:y + h, x:x + w]
+        if crop.size == 0:
+            return None
+        g = cv2.resize(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), (120, 90), interpolation=cv2.INTER_AREA)
+        return cv2.GaussianBlur(g, (5, 5), 0)
+
+    def _paddle_change(self, frame2):
+        """Fraksi area ROI paddle yang BERUBAH WARNA dibanding baseline (belt kosong
+        saat sorting mulai). Inti tampol yang simpel: ada benda di area -> nilai naik."""
+        cur = self._gray_roi(frame2, self._active_paddle_roi())
+        if cur is None or self._paddle_baseline is None or cur.shape != self._paddle_baseline.shape:
+            return 0.0
+        thr = int((self.cfg.get("sort_cam2") or {}).get("slap_pixel_threshold", 35))
+        return float((cv2.absdiff(cur, self._paddle_baseline) > thr).mean())
+
+    def _infer(self, frame, det_cfg, roi):
+        if frame is None:
+            return []
+        conf_floor = min(det_cfg["conf_per_class"].values()) if det_cfg["conf_per_class"] else det_cfg["conf_threshold"]
+        dets_all = self.detector.infer(frame, imgsz=int(self.cfg.get("detect", "imgsz", default=480)), conf=conf_floor)
+        return filter_dets(dets_all, roi, det_cfg["min_area"], det_cfg["conf_threshold"], det_cfg["conf_per_class"])
 
     def _infer(self, frame, det_cfg, roi):
         if frame is None:
@@ -322,22 +331,17 @@ class SortController:
                 self._state_reject(frame1)
             self._set_annotated("cam2", draw_overlay(self.cams.cam2.read(), [], self.cfg.get("sort_cam2", "paddle_roi"), "idle"))
 
-        elif st in ("STRAIGHT_OUT", "STRAIGHT_EXTRA", "SERVO_SORT", "SERVO_RETURN"):
-            roi2 = self._active_paddle_roi() if st in ("SERVO_SORT", "SERVO_RETURN") else self.cfg.get("sort_cam2", "paddle_roi")
+        elif st in ("STRAIGHT_OUT", "SERVO_SORT", "SERVO_RETURN"):
             frame2 = self.cams.cam2.read()
-            dets2 = self._infer(frame2, self._detcfg_cam2(), None)
-            bd = best_det(dets2)
-            self._cam2_best = ({"cx": int(bd.cx), "cy": int(bd.cy), "conf": round(bd.conf, 2)}
-                               if bd is not None else None)
-            self._set_annotated("cam2", draw_overlay(frame2, dets2, roi2, st, self.last_message))
+            roi2 = self._active_paddle_roi() if st in ("SERVO_SORT", "SERVO_RETURN") else None
+            # tanpa YOLO di cam2 -> ringan; cukup gambar ROI + info perubahan
+            self._set_annotated("cam2", draw_overlay(frame2, [], roi2, st, self.last_message))
             self._set_annotated("cam1", draw_overlay(self.cams.cam1.read(), [], self.cfg.get("detect", "roi"), "idle"))
 
             if st == "STRAIGHT_OUT":
-                self._state_straight_out(dets2)
-            elif st == "STRAIGHT_EXTRA":
-                self._state_straight_extra()
+                self._state_straight_out()
             elif st == "SERVO_SORT":
-                self._state_servo_sort(dets2, frame2)
+                self._state_servo_sort(frame2)
             elif st == "SERVO_RETURN":
                 self._state_servo_return()
 
@@ -458,9 +462,13 @@ class SortController:
             self._transition("STRAIGHT_OUT", f"{self.ripeness}: mundur lurus keluar belakang")
         else:
             self._active_servo = 1 if action == "servo1" else 2
-            self._sort_start_pos = None
+            self._slap_hits = 0
             self.bridge.servo_open(self._active_servo)
-            self._transition("SERVO_SORT", f"{self.ripeness}: servo{self._active_servo} buka, mundur + track cam2")
+            # baseline paddle = kondisi KOSONG saat ini (buah belum sampai lengan).
+            f2 = self.cams.cam2.read()
+            self._paddle_baseline = self._gray_roi(f2, self._active_paddle_roi())
+            self._transition("SERVO_SORT",
+                             f"{self.ripeness}: servo{self._active_servo} buka, tunggu buah masuk paddle")
 
     def _reject_allowed(self):
         """Cegah loop reject: kalau berkali-kali reject beruntun tanpa satu pun
@@ -497,71 +505,32 @@ class SortController:
     # ---------------------------------------------------------
     # FASE CAM2 (sorting buah naga)
     # ---------------------------------------------------------
-    def _state_straight_out(self, dets):
+    def _state_straight_out(self):
+        # matang: tak ada servo, mundur lurus selama durasi tetap sampai keluar.
         if self._motor_watchdog():
             return
-        tc = self._track_conf()
-        if any(d.conf >= tc for d in dets):
-            self._empty = 0
-        else:
-            self._empty += 1
-        if self._empty >= int(self.cfg.get("detect", "exit_frames", default=6)):
-            self._transition("STRAIGHT_EXTRA", "Keluar frame cam2, mundur tambahan")
-
-    def _state_straight_extra(self):
-        extra = float(self.cfg.get("timing", "backward_extra_matang_seconds", default=5.0))
-        if time.time() - self._t_state >= extra:
+        dur = float(self.cfg.get("timing", "backward_extra_matang_seconds", default=5.0))
+        remain = dur - (time.time() - self._t_state)
+        self.last_message = f"matang: mundur lurus keluar ({remain:.1f}s lagi)"
+        if remain <= 0:
             self.bridge.motor_stop()
             self._goto_cooldown()
 
-    def _state_servo_sort(self, dets, frame):
+    def _state_servo_sort(self, frame2):
+        # SIMPEL: begitu ADA PERUBAHAN WARNA di area paddle servo aktif -> tampol.
         if self._motor_watchdog():
             self.bridge.servo_close(self._active_servo)
             return
-        # Jeda "lengan siap": cam1 & cam2 saling tumpang tindih, sehingga buah yang
-        # baru mulai jalan sudah terlihat cam2. Tunggu dulu supaya buah benar-benar
-        # sampai di paddle, jangan menampol angin.
-        arm_delay = self._arm_delay()
-        waited = time.time() - self._t_state
-        if waited < arm_delay:
-            self.last_message = (f"servo{self._active_servo} terbuka, menunggu buah mendekat "
-                                 f"({waited:.1f}/{arm_delay:.1f}s)")
-            return
-
-        # Catat posisi awal buah di cam2 (buah sudah terlihat sejak awal karena
-        # FOV cam1 & cam2 tumpang tindih).
-        bd = best_det(dets)
-        if self._sort_start_pos is None and bd is not None:
-            self._sort_start_pos = (bd.cx, bd.cy)
-
-        # TAMPOL saat titik tengah buah masuk zona paddle servo yang aktif.
-        # Cek SEMUA deteksi (bukan cuma yang conf tertinggi) agar buah dengan
-        # confidence sedang tetap memicu selama >= track_conf.
-        roi = self._active_paddle_roi()
-        tc = self._track_conf()
-        for d in sorted(dets, key=lambda x: -x.conf):
-            if d.conf < tc:
-                continue
-            if not (roi["x"] <= d.cx <= roi["x"] + roi["w"]
-                    and roi["y"] <= d.cy <= roi["y"] + roi["h"]):
-                continue
-
-            # Wajib sudah MENEMPUH JARAK dari posisi awal. Ini mencegah tampol
-            # dini pada buah yang memang sudah tampak di cam2 sejak awal tapi
-            # belum sampai lengan servo.
-            need = float((self.cfg.get("sort_cam2") or {}).get("min_travel_px", 120))
-            if self._sort_start_pos is not None:
-                sx, sy = self._sort_start_pos
-                moved = ((d.cx - sx) ** 2 + (d.cy - sy) ** 2) ** 0.5
-                if moved < need:
-                    self.last_message = (f"servo{self._active_servo}: buah baru bergerak "
-                                         f"{moved:.0f}px (perlu {need:.0f}px)")
-                    continue
-
-            self.bridge.servo_close(self._active_servo)  # kembali ke 0 derajat
-            self._transition("SERVO_RETURN",
-                             f"Tampol! servo{self._active_servo} -> 0 (conf {d.conf:.2f})")
-            return
+        change = self._paddle_change(frame2)
+        self._last_paddle_change = change
+        thr = float((self.cfg.get("sort_cam2") or {}).get("slap_area_ratio", 0.12))
+        need = int((self.cfg.get("sort_cam2") or {}).get("slap_frames", 2))
+        self._slap_hits = self._slap_hits + 1 if change >= thr else 0
+        self.last_message = (f"servo{self._active_servo}: perubahan paddle "
+                             f"{change:.2f} / {thr:.2f}  ({self._slap_hits}/{need})")
+        if self._slap_hits >= need:
+            self.bridge.servo_close(self._active_servo)  # TAMPOL -> 0 derajat
+            self._transition("SERVO_RETURN", f"Tampol! servo{self._active_servo} (Δ{change:.2f})")
 
     def _state_servo_return(self):
         hold = float(self.cfg.get("timing", "servo_slap_hold_ms", default=500)) / 1000.0
@@ -622,7 +591,8 @@ class SortController:
         self._watching = False
         self._t_watch_start = 0.0
         self._last_fruit = None
-        self._sort_start_pos = None
+        self._paddle_baseline = None
+        self._slap_hits = 0
         self._settle_low = 0
         self._empty = 0
         self._t_motor = 0.0
@@ -678,7 +648,7 @@ class SortController:
             "cam2_ok": self.cams.cam2.healthy(),
             "cam1_fps": round(self.cams.cam1.actual_fps, 1),
             "cam2_fps": round(self.cams.cam2.actual_fps, 1),
-            "cam2_best": self._cam2_best,   # {cx,cy,conf} untuk kalibrasi ROI paddle
+            "paddle_change": round(self._last_paddle_change, 3),  # utk kalibrasi slap
             "indicator": self._led_status,  # ready(hijau)/busy(merah)/notready(kuning)
             "has_empty_ref": self._empty_ref is not None,
             "motion": round(self._last_motion, 1),

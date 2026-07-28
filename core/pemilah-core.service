@@ -9,6 +9,9 @@ Type=simple
 User=dila
 WorkingDirectory=/home/dila/PemilahBuahNaga/core
 Environment=PYTHONUNBUFFERED=1
+# Izinkan service (user dila) me-reset port USB kamera untuk self-healing.
+# Prefix '+' -> dijalankan sebagai root walau Service User=dila.
+ExecStartPre=+/bin/sh -c 'chmod o+w /sys/bus/usb/drivers/usb/bind /sys/bus/usb/drivers/usb/unbind || true'
 ExecStart=/home/dila/PemilahBuahNaga/.venv/bin/python /home/dila/PemilahBuahNaga/core/main.py
 Restart=always
 RestartSec=3
