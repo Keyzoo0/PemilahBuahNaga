@@ -454,6 +454,9 @@ class SortController:
         self.bridge.motor_backward()       # BUAH NAGA -> mundur ke servo (bukan forward!)
         self._t_motor = time.time()
         if action == "straight":
+            # pastikan kedua servo TERTUTUP agar buah matang tak terganjal lengan
+            self.bridge.s1_close()
+            self.bridge.s2_close()
             self._transition("STRAIGHT_OUT", f"{self.ripeness}: mundur lurus keluar belakang")
         else:
             self._active_servo = 1 if action == "servo1" else 2
