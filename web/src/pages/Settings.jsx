@@ -135,7 +135,7 @@ export default function Settings({ status }) {
       <div className="card" style={{ marginBottom: 16 }}>
         <h3>Timing & Aktuator</h3>
         <div className="row4">
-          {numField("Backward matang (dtk)", ["timing", "backward_extra_matang_seconds"], "0.1")}
+          {numField("Matang: delay mundur setelah keluar cam2 (dtk)", ["timing", "backward_extra_matang_seconds"], "0.1")}
           {numField("Servo open (°)", ["timing", "servo_open_angle"], "1")}
           {numField("Servo close (°)", ["timing", "servo_close_angle"], "1")}
           {numField("Servo slap hold (ms)", ["timing", "servo_slap_hold_ms"], "10")}

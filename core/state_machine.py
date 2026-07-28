@@ -69,6 +69,8 @@ class SortController:
         self._paddle_baseline = None  # ROI paddle kosong saat sorting mulai
         self._slap_hits = 0           # frame berturut ada perubahan di paddle
         self._last_paddle_change = 0.0
+        self._matang_seen = False     # buah matang sudah masuk cam2
+        self._t_exit = 0.0            # penanda buah matang keluar cam2
         self._consec_rejects = 0    # pengaman: cegah loop reject tanpa henti
         self._t_watch_start = 0.0   # kapan mulai mengawasi (anti-deadlock settle)
         self._last_fruit = None     # (label, conf) buah terakhir terlihat saat watch
@@ -527,17 +529,42 @@ class SortController:
     # FASE CAM2 (sorting buah naga)
     # ---------------------------------------------------------
     def _state_straight_out(self, frame2):
-        # matang: TANPA servo. Mundur lurus dengan durasi TETAP yang cukup lama
-        # untuk membawa buah keluar dari belt. Sederhana & tak bisa nyangkut/hang
-        # (deteksi 'keluar frame' via kamera tidak reliabel karena FOV tumpang
-        # tindih & belt bertekstur).
+        # matang: mundur lurus. Pakai YOLO utk tahu buah masih ADA di cam2 atau
+        # sudah KELUAR. buah masuk cam2 -> terlihat -> keluar (tak terlihat lagi)
+        # -> mundur delay sekian detik -> berhenti.
         if self._motor_watchdog():
             return
-        self._keep_motor()  # jaga motor tetap mundur (anti perintah hilang)
-        dur = float(self.cfg.get("timing", "backward_extra_matang_seconds", default=6.0))
-        remain = dur - (time.time() - self._t_state)
-        self.last_message = f"matang: mundur lurus keluar ({remain:.1f}s lagi)"
-        if remain <= 0:
+        self._keep_motor()  # jaga motor tetap mundur
+
+        present = best_det(self._infer(frame2, self._detcfg_cam1(), None)) is not None
+        exitf = int(self.cfg.get("detect", "exit_frames", default=6))
+        delay = float(self.cfg.get("timing", "backward_extra_matang_seconds", default=2.0))
+        hard = float((self.cfg.get("sort_cam2") or {}).get("matang_max_seconds", 12.0))
+        elapsed = time.time() - self._t_state
+
+        if present:
+            self._matang_seen = True
+            self._empty = 0
+            self._t_exit = 0.0
+        elif self._matang_seen:
+            self._empty += 1
+
+        if not self._matang_seen:
+            self.last_message = f"matang: mundur, menunggu buah masuk cam2 ({elapsed:.1f}s)"
+        elif self._empty < exitf:
+            self.last_message = "matang: buah di cam2, mundur terus"
+        else:
+            if self._t_exit == 0.0:
+                self._t_exit = time.time()
+            remain = delay - (time.time() - self._t_exit)
+            self.last_message = f"matang: keluar cam2, mundur {remain:.1f}s lagi"
+            if remain <= 0:
+                self._stop_motor()
+                self._goto_cooldown()
+                return
+
+        # jaring pengaman: apa pun yang terjadi, jangan mundur > hard cap
+        if elapsed >= hard:
             self._stop_motor()
             self._goto_cooldown()
 
@@ -633,6 +660,8 @@ class SortController:
         self._last_fruit = None
         self._paddle_baseline = None
         self._slap_hits = 0
+        self._matang_seen = False
+        self._t_exit = 0.0
         self._settle_low = 0
         self._empty = 0
         self._t_motor = 0.0
