@@ -6,3 +6,6 @@ pyserial
 jinja2
 python-multipart
 zeroconf
+onnx
+onnxruntime
+ncnn

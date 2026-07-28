@@ -245,7 +245,26 @@ def api_train_stop():
 @app.get("/api/models")
 def api_models():
     import dataset as ds
-    return {"models": ds.list_models()}
+    return {"models": ds.list_models(), "active_kind": ds.active_model_kind()}
+
+
+@app.post("/api/model/export")
+async def api_model_export(request: Request):
+    """Konversi best.pt -> ONNX/NCNN agar inferensi lebih ringan di Pi."""
+    import dataset as ds
+    body = await request.json() if await request.body() else {}
+    ctx["controller"].set_manual(True)  # bebaskan CPU selama export
+    ok, msg = ds.export_model_async(fmt=body.get("format", "onnx"),
+                                    imgsz=int(body.get("imgsz", 480)))
+    if not ok:
+        return JSONResponse({"ok": False, "message": msg}, status_code=400)
+    return {"ok": True, "format": msg}
+
+
+@app.get("/api/model/export/status")
+def api_model_export_status():
+    import dataset as ds
+    return ds.export_state
 
 
 @app.post("/api/models/activate")

@@ -9,10 +9,12 @@ from pathlib import Path
 import cv2
 
 BASE_DIR = Path(__file__).resolve().parent
-# best.pt diletakkan sejajar core/ (dari zip) atau di dalam core/
+# Urutan prioritas: format teroptimasi utk ARM dulu (lebih ringan/cepat di Pi),
+# baru fallback ke .pt PyTorch. NCNN biasanya tercepat di ARM, lalu ONNX.
 MODEL_CANDIDATES = [
-    BASE_DIR / "best_ncnn_model",
-    BASE_DIR / "best.pt",
+    BASE_DIR / "best_ncnn_model",   # NCNN (tercepat di ARM)
+    BASE_DIR / "best.onnx",         # ONNX (onnxruntime)
+    BASE_DIR / "best.pt",           # PyTorch
     BASE_DIR.parent / "best.pt",
 ]
 

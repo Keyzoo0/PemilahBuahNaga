@@ -28,8 +28,8 @@
     },
     "presence_frames": 5,
     "exit_frames": 6,
-    "settle_motion_threshold": 2,
-    "settle_frames": 8,
+    "settle_motion_threshold": 100,
+    "settle_frames": 100,
     "fg_pixel_threshold": 30,
     "fg_area_ratio": 0.04,
     "settle_timeout_seconds": 8,
@@ -43,7 +43,7 @@
     "cooldown_seconds": 0,
     "max_motor_runtime_seconds": 15,
     "fault_auto_reset_seconds": 1,
-    "reject_forward_seconds": 1
+    "reject_forward_seconds": 3
   },
   "mapping": {
     "mentah": "servo1",
@@ -52,16 +52,16 @@
   },
   "sort_cam2": {
     "paddle_roi_1": {
-      "x": 292,
-      "y": 343,
-      "w": 644,
-      "h": 371
+      "x": 503,
+      "y": 399,
+      "w": 371,
+      "h": 312
     },
     "paddle_roi_2": {
-      "x": 553,
-      "y": 51,
-      "w": 312,
-      "h": 130
+      "x": 531,
+      "y": 49,
+      "w": 349,
+      "h": 135
     },
     "paddle_roi": {
       "x": 520,
@@ -73,8 +73,8 @@
     "slap_frames": 1,
     "slap_pixel_threshold": 45,
     "blind_spot_seconds": 2,
-    "slap_area_ratio_1": 0.2,
-    "slap_area_ratio_2": 0.45
+    "slap_area_ratio_1": 0.25,
+    "slap_area_ratio_2": 0.4
   },
   "serial": {
     "port": "/dev/ttyUSB0",

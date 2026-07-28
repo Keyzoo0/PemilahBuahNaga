@@ -80,6 +80,13 @@ export async function listModels() {
 }
 export const activateModel = (path) => post("/api/models/activate", { path });
 
+// export model .pt -> onnx/ncnn
+export const exportModel = (format, imgsz) => post("/api/model/export", { format, imgsz });
+export async function exportStatus() {
+  const r = await fetch("/api/model/export/status");
+  return r.json();
+}
+
 // WebSocket status dengan auto-reconnect + fallback polling.
 export function subscribeStatus(onData) {
   let ws,

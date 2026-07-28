@@ -290,3 +290,47 @@ def list_models():
 
 
 trainer = Trainer()
+
+
+# =========================================================
+# EXPORT MODEL (.pt -> ONNX / NCNN, lebih ringan di Pi/ARM)
+# =========================================================
+export_state = {"running": False, "format": None, "result": None, "error": None}
+_export_lock = threading.Lock()
+
+
+def export_model_async(fmt="onnx", imgsz=480):
+    fmt = "ncnn" if str(fmt).lower() == "ncnn" else "onnx"
+    with _export_lock:
+        if export_state["running"]:
+            return False, "Export sedang berjalan"
+        src = _active_model_path()
+        if not src.exists():
+            return False, "best.pt tidak ditemukan"
+        export_state.update(running=True, format=fmt, result=None, error=None)
+        threading.Thread(target=_do_export, args=(str(src), fmt, int(imgsz)), daemon=True).start()
+        return True, fmt
+
+
+def _do_export(src, fmt, imgsz):
+    try:
+        import torch
+        torch.set_num_threads(4)
+        from ultralytics import YOLO
+        out = YOLO(src).export(format=fmt, imgsz=imgsz)
+        export_state["result"] = str(out)
+        print(f"[EXPORT] {fmt} selesai: {out}")
+    except Exception as exc:
+        export_state["error"] = str(exc)
+        print(f"[EXPORT] gagal: {exc}")
+    finally:
+        export_state["running"] = False
+
+
+def active_model_kind():
+    """Format model yang SEDANG dipakai detector (paling prioritas yang ada)."""
+    if (BASE_DIR / "best_ncnn_model").exists():
+        return "ncnn"
+    if (BASE_DIR / "best.onnx").exists():
+        return "onnx"
+    return "pytorch (.pt)"

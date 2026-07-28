@@ -1,17 +1,31 @@
 import React, { useEffect, useRef, useState } from "react";
-import { dsList, trainStart, trainStop, trainStatus, listModels, activateModel } from "../api.js";
+import { dsList, trainStart, trainStop, trainStatus, listModels, activateModel, exportModel, exportStatus } from "../api.js";
 
 export default function Training() {
   const [st, setSt] = useState({ running: false, log: [] });
   const [stats, setStats] = useState({});
   const [models, setModels] = useState([]);
+  const [activeKind, setActiveKind] = useState("");
+  const [exp, setExp] = useState({ running: false });
   const [p, setP] = useState({ epochs: 40, imgsz: 416, batch: 8, freeze: 10 });
   const [toast, setToast] = useState(null);
   const logRef = useRef(null);
 
   const refresh = () => {
     trainStatus().then(setSt).catch(() => {});
-    listModels().then((d) => setModels(d.models || [])).catch(() => {});
+    listModels().then((d) => {
+      setModels(d.models || []);
+      setActiveKind(d.active_kind || "");
+    }).catch(() => {});
+    exportStatus().then(setExp).catch(() => {});
+  };
+
+  const doExport = async (format) => {
+    const res = await exportModel(format, p.imgsz);
+    flash(res.ok ? "ok" : "err", res.ok
+      ? `Export ${format} dimulai (sorting -> MANUAL). Tunggu selesai lalu restart service.`
+      : res.message);
+    refresh();
   };
   useEffect(() => {
     dsList().then((d) => setStats(d.stats || {}));
@@ -133,6 +147,28 @@ export default function Training() {
               ))}
             </tbody>
           </table>
+
+          <div className="subhead" style={{ marginTop: 16 }}>
+            Optimasi Model (lebih ringan di Pi)
+          </div>
+          <div className="cam-meta" style={{ marginBottom: 8 }}>
+            Model aktif sekarang: <b style={{ color: "var(--pink)" }}>{activeKind || "…"}</b>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <button className="btn sm" disabled={exp.running} onClick={() => doExport("onnx")}>
+              Export ONNX
+            </button>
+            <button className="btn sm primary" disabled={exp.running} onClick={() => doExport("ncnn")}>
+              Export NCNN (tercepat)
+            </button>
+            {exp.running && <span className="cam-meta">meng-export {exp.format}…</span>}
+            {exp.result && !exp.running && <span className="toast ok">✓ {exp.format} siap</span>}
+            {exp.error && <span className="toast err">{exp.error.slice(0, 60)}</span>}
+          </div>
+          <div className="roi-hint" style={{ marginTop: 6 }}>
+            Konversi best.pt → format ringan. NCNN paling cepat di ARM (~2×), ONNX ~1.3×.
+            Setelah selesai, restart service: model ringan otomatis dipakai (NCNN &gt; ONNX &gt; .pt).
+          </div>
         </div>
       </div>
 
