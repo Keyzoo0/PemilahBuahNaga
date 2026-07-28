@@ -67,6 +67,9 @@ class SortController:
         self._paddle_baseline = None  # ROI paddle kosong saat sorting mulai
         self._slap_hits = 0           # frame berturut ada perubahan di paddle
         self._last_paddle_change = 0.0
+        self._matang_baseline = None  # cam2 kosong (utk deteksi matang lewat)
+        self._matang_seen = False     # buah matang sudah terlihat di cam2
+        self._t_exit = 0.0            # penanda mulai mundur-tambahan matang
         self._consec_rejects = 0    # pengaman: cegah loop reject tanpa henti
         self._t_watch_start = 0.0   # kapan mulai mengawasi (anti-deadlock settle)
         self._last_fruit = None     # (label, conf) buah terakhir terlihat saat watch
@@ -276,25 +279,27 @@ class SortController:
                 or {"x": 0, "y": 0, "w": 999999, "h": 999999})
 
     def _gray_roi(self, frame, roi):
-        """Grayscale kecil (ukuran tetap) dari sebuah ROI, untuk banding perubahan."""
-        if frame is None or roi is None:
+        """Grayscale kecil (ukuran tetap) dari ROI (roi=None -> seluruh frame)."""
+        if frame is None:
             return None
-        x, y, w, h = int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
-        x, y = max(0, x), max(0, y)
-        crop = frame[y:y + h, x:x + w]
+        if roi is None:
+            crop = frame
+        else:
+            x, y, w, h = int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
+            x, y = max(0, x), max(0, y)
+            crop = frame[y:y + h, x:x + w]
         if crop.size == 0:
             return None
         g = cv2.resize(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), (120, 90), interpolation=cv2.INTER_AREA)
         return cv2.GaussianBlur(g, (5, 5), 0)
 
-    def _paddle_change(self, frame2):
-        """Fraksi area ROI paddle yang BERUBAH WARNA dibanding baseline (belt kosong
-        saat sorting mulai). Inti tampol yang simpel: ada benda di area -> nilai naik."""
-        cur = self._gray_roi(frame2, self._active_paddle_roi())
-        if cur is None or self._paddle_baseline is None or cur.shape != self._paddle_baseline.shape:
+    def _area_change(self, frame, roi, baseline):
+        """Fraksi area ROI yang BERUBAH WARNA dibanding baseline (0-1)."""
+        cur = self._gray_roi(frame, roi)
+        if cur is None or baseline is None or cur.shape != baseline.shape:
             return 0.0
         thr = int((self.cfg.get("sort_cam2") or {}).get("slap_pixel_threshold", 35))
-        return float((cv2.absdiff(cur, self._paddle_baseline) > thr).mean())
+        return float((cv2.absdiff(cur, baseline) > thr).mean())
 
     def _infer(self, frame, det_cfg, roi):
         if frame is None:
@@ -332,7 +337,7 @@ class SortController:
             self._set_annotated("cam1", draw_overlay(self.cams.cam1.read(), [], self.cfg.get("detect", "roi"), "idle"))
 
             if st == "STRAIGHT_OUT":
-                self._state_straight_out()
+                self._state_straight_out(frame2)
             elif st == "SERVO_SORT":
                 self._state_servo_sort(frame2)
             elif st == "SERVO_RETURN":
@@ -496,16 +501,44 @@ class SortController:
     # ---------------------------------------------------------
     # FASE CAM2 (sorting buah naga)
     # ---------------------------------------------------------
-    def _state_straight_out(self):
-        # matang: tak ada servo, mundur lurus selama durasi tetap sampai keluar.
+    def _state_straight_out(self, frame2):
+        # matang: mundur LURUS TERUS sampai buah benar-benar KELUAR frame cam2.
+        # 1) lewati titik buta, 2) baseline cam2 kosong, 3) tunggu buah lewat
+        #    (perubahan naik lalu turun lagi = sudah keluar), 4) +extra lalu stop.
         if self._motor_watchdog():
             return
-        dur = float(self.cfg.get("timing", "backward_extra_matang_seconds", default=5.0))
-        remain = dur - (time.time() - self._t_state)
-        self.last_message = f"matang: mundur lurus keluar ({remain:.1f}s lagi)"
-        if remain <= 0:
-            self.bridge.motor_stop()
-            self._goto_cooldown()
+        s = self.cfg.get("sort_cam2") or {}
+        blind = float(s.get("blind_spot_seconds", 2.0))
+        elapsed = time.time() - self._t_state
+        if elapsed < blind:
+            self.last_message = f"matang: mundur lewati titik buta ({elapsed:.1f}/{blind:.1f}s)"
+            return
+        if self._matang_baseline is None:
+            self._matang_baseline = self._gray_roi(frame2, None)  # seluruh frame cam2
+            self._matang_seen = False
+            self._empty = 0
+            return
+
+        change = self._area_change(frame2, None, self._matang_baseline)
+        self._last_paddle_change = change
+        thr = float(s.get("matang_exit_ratio", 0.06))
+        need = int(s.get("slap_frames", 2))
+        if change >= thr:
+            self._matang_seen = True
+            self._empty = 0
+        elif self._matang_seen:
+            self._empty += 1  # buah tadi ada, sekarang hilang -> sedang keluar
+        self.last_message = (f"matang: mundur lurus, perubahan {change:.2f} "
+                             f"{'(buah lewat)' if self._matang_seen else '(menunggu buah)'}")
+
+        # buah sudah lewat & keluar -> mundur sedikit lagi lalu berhenti
+        if self._matang_seen and self._empty >= need:
+            if self._t_exit == 0.0:
+                self._t_exit = time.time()
+            extra = float(self.cfg.get("timing", "backward_extra_matang_seconds", default=2.0))
+            if time.time() - self._t_exit >= extra:
+                self.bridge.motor_stop()
+                self._goto_cooldown()
 
     def _state_servo_sort(self, frame2):
         # 1) mundur LEWATI TITIK BUTA dulu (buah dari cam1 -> cam2),
@@ -525,9 +558,10 @@ class SortController:
             self._paddle_baseline = self._gray_roi(frame2, self._active_paddle_roi())
             return
 
-        change = self._paddle_change(frame2)
+        change = self._area_change(frame2, self._active_paddle_roi(), self._paddle_baseline)
         self._last_paddle_change = change
-        thr = float(s.get("slap_area_ratio", 0.12))
+        # ambang bisa BEDA per servo (servo1 & servo2 kondisi/jarak beda)
+        thr = float(s.get(f"slap_area_ratio_{self._active_servo}", s.get("slap_area_ratio", 0.12)))
         need = int(s.get("slap_frames", 2))
         self._slap_hits = self._slap_hits + 1 if change >= thr else 0
         self.last_message = (f"servo{self._active_servo}: perubahan paddle "
@@ -597,6 +631,9 @@ class SortController:
         self._last_fruit = None
         self._paddle_baseline = None
         self._slap_hits = 0
+        self._matang_baseline = None
+        self._matang_seen = False
+        self._t_exit = 0.0
         self._settle_low = 0
         self._empty = 0
         self._t_motor = 0.0

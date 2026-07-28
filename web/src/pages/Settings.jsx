@@ -89,7 +89,9 @@ export default function Settings({ status }) {
             onChange={(v) => upd(["sort_cam2", "paddle_roi_2"], v)}
           />
           {numField("Jeda titik buta — mundur dulu sebelum cek paddle (dtk)", ["sort_cam2", "blind_spot_seconds"], "0.1")}
-          {numField("Sensitivitas tampol — rasio area berubah (0–1, kecil = lebih sensitif)", ["sort_cam2", "slap_area_ratio"], "0.01")}
+          {numField("Sensitivitas SERVO 1 / mentah (rasio 0–1)", ["sort_cam2", "slap_area_ratio_1"], "0.01")}
+          {numField("Sensitivitas SERVO 2 / setengah (rasio 0–1)", ["sort_cam2", "slap_area_ratio_2"], "0.01")}
+          {numField("Matang: ambang deteksi lewat cam2 (rasio 0–1)", ["sort_cam2", "matang_exit_ratio"], "0.01")}
           {numField("Frame berturut sebelum tampol", ["sort_cam2", "slap_frames"], "1")}
           {numField("Ambang beda piksel", ["sort_cam2", "slap_pixel_threshold"], "1")}
           <div className="roi-hint">
