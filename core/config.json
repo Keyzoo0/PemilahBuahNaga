@@ -36,7 +36,7 @@
     "max_consecutive_rejects": 3
   },
   "timing": {
-    "backward_extra_matang_seconds": 2,
+    "backward_extra_matang_seconds": 6,
     "servo_open_angle": 51,
     "servo_close_angle": 0,
     "servo_slap_hold_ms": 500,
@@ -74,8 +74,7 @@
     "slap_pixel_threshold": 45,
     "blind_spot_seconds": 2,
     "slap_area_ratio_1": 0.2,
-    "slap_area_ratio_2": 0.45,
-    "matang_exit_ratio": 0.06
+    "slap_area_ratio_2": 0.45
   },
   "serial": {
     "port": "/dev/ttyUSB0",
