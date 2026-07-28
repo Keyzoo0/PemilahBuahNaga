@@ -303,13 +303,6 @@ class SortController:
         dets_all = self.detector.infer(frame, imgsz=int(self.cfg.get("detect", "imgsz", default=480)), conf=conf_floor)
         return filter_dets(dets_all, roi, det_cfg["min_area"], det_cfg["conf_threshold"], det_cfg["conf_per_class"])
 
-    def _infer(self, frame, det_cfg, roi):
-        if frame is None:
-            return []
-        conf_floor = min(det_cfg["conf_per_class"].values()) if det_cfg["conf_per_class"] else det_cfg["conf_threshold"]
-        dets_all = self.detector.infer(frame, imgsz=int(self.cfg.get("detect", "imgsz", default=480)), conf=conf_floor)
-        return filter_dets(dets_all, roi, det_cfg["min_area"], det_cfg["conf_threshold"], det_cfg["conf_per_class"])
-
     # ---------------------------------------------------------
     def _tick(self):
         self._update_indicators()
@@ -463,12 +456,10 @@ class SortController:
         else:
             self._active_servo = 1 if action == "servo1" else 2
             self._slap_hits = 0
+            self._paddle_baseline = None  # diambil SETELAH jeda titik buta
             self.bridge.servo_open(self._active_servo)
-            # baseline paddle = kondisi KOSONG saat ini (buah belum sampai lengan).
-            f2 = self.cams.cam2.read()
-            self._paddle_baseline = self._gray_roi(f2, self._active_paddle_roi())
             self._transition("SERVO_SORT",
-                             f"{self.ripeness}: servo{self._active_servo} buka, tunggu buah masuk paddle")
+                             f"{self.ripeness}: servo{self._active_servo} buka, mundur lewati titik buta")
 
     def _reject_allowed(self):
         """Cegah loop reject: kalau berkali-kali reject beruntun tanpa satu pun
@@ -517,17 +508,30 @@ class SortController:
             self._goto_cooldown()
 
     def _state_servo_sort(self, frame2):
-        # SIMPEL: begitu ADA PERUBAHAN WARNA di area paddle servo aktif -> tampol.
+        # 1) mundur LEWATI TITIK BUTA dulu (buah dari cam1 -> cam2),
+        # 2) ambil baseline paddle kosong yang segar,
+        # 3) begitu ADA PERUBAHAN WARNA (buah masuk paddle) -> tampol.
         if self._motor_watchdog():
             self.bridge.servo_close(self._active_servo)
             return
+        s = self.cfg.get("sort_cam2") or {}
+        blind = float(s.get("blind_spot_seconds", 2.0))
+        elapsed = time.time() - self._t_state
+        if elapsed < blind:
+            self.last_message = (f"servo{self._active_servo}: mundur lewati titik buta "
+                                 f"({elapsed:.1f}/{blind:.1f}s)")
+            return
+        if self._paddle_baseline is None:  # ambil sekali, tepat setelah titik buta
+            self._paddle_baseline = self._gray_roi(frame2, self._active_paddle_roi())
+            return
+
         change = self._paddle_change(frame2)
         self._last_paddle_change = change
-        thr = float((self.cfg.get("sort_cam2") or {}).get("slap_area_ratio", 0.12))
-        need = int((self.cfg.get("sort_cam2") or {}).get("slap_frames", 2))
+        thr = float(s.get("slap_area_ratio", 0.12))
+        need = int(s.get("slap_frames", 2))
         self._slap_hits = self._slap_hits + 1 if change >= thr else 0
         self.last_message = (f"servo{self._active_servo}: perubahan paddle "
-                             f"{change:.2f} / {thr:.2f}  ({self._slap_hits}/{need})")
+                             f"{change:.2f}/{thr:.2f} ({self._slap_hits}/{need})")
         if self._slap_hits >= need:
             self.bridge.servo_close(self._active_servo)  # TAMPOL -> 0 derajat
             self._transition("SERVO_RETURN", f"Tampol! servo{self._active_servo} (Δ{change:.2f})")

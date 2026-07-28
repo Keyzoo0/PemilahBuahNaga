@@ -52,16 +52,16 @@
   },
   "sort_cam2": {
     "paddle_roi_1": {
-      "x": 243,
-      "y": 366,
+      "x": 292,
+      "y": 343,
       "w": 644,
-      "h": 264
+      "h": 371
     },
     "paddle_roi_2": {
-      "x": 483,
-      "y": 54,
-      "w": 448,
-      "h": 212
+      "x": 379,
+      "y": 43,
+      "w": 538,
+      "h": 282
     },
     "paddle_roi": {
       "x": 520,
@@ -69,9 +69,9 @@
       "w": 368,
       "h": 663
     },
-    "slap_area_ratio": 0.12,
-    "slap_frames": 2,
-    "slap_pixel_threshold": 35
+    "slap_area_ratio": 0.1,
+    "slap_frames": 1,
+    "slap_pixel_threshold": 10
   },
   "serial": {
     "port": "/dev/ttyUSB0",

@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).resolve().parent

@@ -88,6 +88,7 @@ export default function Settings({ status }) {
             value={cfg.sort_cam2.paddle_roi_2 || cfg.sort_cam2.paddle_roi}
             onChange={(v) => upd(["sort_cam2", "paddle_roi_2"], v)}
           />
+          {numField("Jeda titik buta — mundur dulu sebelum cek paddle (dtk)", ["sort_cam2", "blind_spot_seconds"], "0.1")}
           {numField("Sensitivitas tampol — rasio area berubah (0–1, kecil = lebih sensitif)", ["sort_cam2", "slap_area_ratio"], "0.01")}
           {numField("Frame berturut sebelum tampol", ["sort_cam2", "slap_frames"], "1")}
           {numField("Ambang beda piksel", ["sort_cam2", "slap_pixel_threshold"], "1")}
