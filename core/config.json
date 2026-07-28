@@ -36,12 +36,12 @@
     "max_consecutive_rejects": 3
   },
   "timing": {
-    "backward_extra_matang_seconds": 12,
+    "backward_extra_matang_seconds": 6,
     "servo_open_angle": 51,
     "servo_close_angle": 0,
     "servo_slap_hold_ms": 500,
     "cooldown_seconds": 0,
-    "max_motor_runtime_seconds": 20,
+    "max_motor_runtime_seconds": 15,
     "fault_auto_reset_seconds": 1,
     "reject_forward_seconds": 1
   },
