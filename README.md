@@ -29,21 +29,88 @@ laptop dan tanpa perlu membuka web.
 ## 🧩 Arsitektur
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph PI[Raspberry Pi 5 - systemd service]
-        CAM[CameraManager<br/>2 USB cam by bus-key] --> YOLO[YOLOv8 best.pt]
-        YOLO --> SM[Sort State Machine]
-        SM --> SER[Serial Bridge]
-        SM --> API[FastAPI + WebSocket]
-        API --> WEB[Web Vite+React<br/>monitor & kalibrasi]
-        CFG[config.json hot-reload] --> SM
+        direction TB
+        
+        subgraph CAMS[Camera System]
+            CAM1[📷 Kamera 1 USB<br/>Bus-key: usb1-1-1<br/>Deteksi & klasifikasi] 
+            CAM2[📷 Kamera 2 USB<br/>Bus-key: usb3-3-1<br/>Tracking sorting]
+        end
+        
+        YOLO[🧠 YOLOv8 Detector<br/>best.pt / NCNN<br/>3 kelas: matang, setengah, mentah]
+        
+        subgraph SM[Sort State Machine]
+            IDLE[IDLE]
+            CLASSIFY[CLASSIFY]
+            FORWARD[FORWARD_CLEAR]
+            DISPATCH{DISPATCH}
+            STRAIGHT[STRAIGHT_OUT]
+            SERVO[SORTING SERVO]
+            COOLDOWN[COOLDOWN]
+        end
+        
+        CFG[⚙️ config.json<br/>Hot-reload<br/>ROI, timing, mapping]
+        
+        SER[🔌 Serial Bridge<br/>pyserial 115200<br/>Auto-reconnect + heartbeat]
+        
+        API[🌐 FastAPI Server<br/>Port 8000<br/>REST + WebSocket + MJPEG]
+        
+        DB[💾 SQLite<br/>store.py<br/>Riwayat sortasi]
     end
-    SER -->|USB 115200| NANO[Arduino Nano]
-    NANO --> MOT[Motor L298N]
-    NANO --> S1[Servo 1]
-    NANO --> S2[Servo 2]
-    NANO --> LED[LED hijau/kuning/merah]
-    NANO --> BUZ[Buzzer]
+    
+    subgraph ARD[Arduino Nano ATmega328P]
+        FW[📜 Firmware main.ino<br/>Heartbeat watchdog<br/>Command parser]
+        MOTOR[🌀 Motor DC L298N<br/>Konveyor forward/backward]
+        S1[🦾 Servo 1<br/>Pin D4<br/>Mentah class 1]
+        S2[🦾 Servo 2<br/>Pin D5<br/>Setengah class 2]
+        LEDG[🟢 LED Hijau<br/>Pin D11<br/>Matang]
+        LEDY[🟡 LED Kuning<br/>Pin D12<br/>Setengah]
+        LEDR[🔴 LED Merah<br/>Pin D13<br/>Mentah]
+        BUZ[🔊 Buzzer<br/>Pin D6<br/>Alert]
+    end
+    
+    subgraph WEB[Web Interface Vite + React]
+        MON[📺 Monitor Page<br/>Live stream cam1/cam2<br/>Status real-time]
+        CAL[⚙️ Kalibrasi Page<br/>ROI editor visual<br/>Parameter tuning]
+        HIST[📊 History Table<br/>Riwayat sortasi]
+    end
+    
+    CAM1 -->|MJPG frame| YOLO
+    CAM2 -->|MJPG frame| SM
+    YOLO -->|Detections| SM
+    CFG -.->|Hot-reload| SM
+    SM -->|Command serial| SER
+    SER -->|USB /dev/ttyUSB0| FW
+    FW -->|Control| MOTOR
+    FW -->|PWM| S1
+    FW -->|PWM| S2
+    FW -->|GPIO| LEDG
+    FW -->|GPIO| LEDY
+    FW -->|GPIO| LEDR
+    FW -->|GPIO| BUZ
+    SM -->|Status update| API
+    API -->|MJPEG stream| WEB
+    API -->|WebSocket push| WEB
+    WEB -->|Config POST| API
+    API -->|Write| CFG
+    SM -->|Store result| DB
+    
+    classDef pi fill:#c2410c,color:#fff
+    classDef arduino fill:#166534,color:#fff
+    classDef web fill:#1e40af,color:#fff
+    classDef camera fill:#7c2d12,color:#fff
+    classDef ml fill:#6b21a8,color:#fff
+    classDef state fill:#065f46,color:#fff
+    classDef actuator fill:#991b1b,color:#fff
+    
+    class PI pi
+    class ARD arduino
+    class WEB web
+    class CAM1,CAMS camera
+    class YOLO ml
+    class SM,IDLE,CLASSIFY,FORWARD,DISPATCH,STRAIGHT,SERVO,COOLDOWN state
+    class MOTOR,S1,S2,LEDG,LEDY,LEDR,BUZ actuator
 ```
 
 Semua inti (YOLO + state machine + serial) berada di **satu service Python** yang selalu berjalan.
@@ -92,18 +159,48 @@ Bisa ~2× lebih cepat dengan export NCNN.
 ## ⚙️ Alur Kerja (State Machine)
 
 ```mermaid
-stateDiagram-v2
-    [*] --> IDLE
-    IDLE --> CLASSIFY : buah naga di ROI cam1
-    CLASSIFY --> FORWARD_CLEAR : LED+beep, motor forward
-    FORWARD_CLEAR --> FORWARD_EXTRA : buah keluar frame
-    FORWARD_EXTRA --> DISPATCH : +2 detik
-    DISPATCH --> STRAIGHT_OUT : matang
-    DISPATCH --> SERVO_SORT : mentah / setengah
-    STRAIGHT_OUT --> COOLDOWN : backward + 5 detik
-    SERVO_SORT --> SERVO_RETURN : cam2 trigger -> servo tampol (0 derajat)
-    SERVO_RETURN --> COOLDOWN
+flowchart TD
+    Start([Mulai]) --> IDLE[🟦 IDLE<br/>Menunggu buah di ROI cam1]
+    IDLE -->|Buah terdeteksi<br/>presence_frames| CLASSIFY[🟨 CLASSIFY<br/>Klasifikasi kematangan<br/>LED + beep]
+    CLASSIFY --> FORWARD_CLEAR[🟩 FORWARD_CLEAR<br/>Motor maju<br/>Tunggu buah keluar frame]
+    FORWARD_CLEAR -->|Buah keluar<br/>exit_frames| FORWARD_EXTRA[🟩 FORWARD_EXTRA<br/>Maju tambahan 2 detik]
+    FORWARD_EXTRA --> DISPATCH{DISPATCH<br/>Berdasarkan kelas}
+    
+    DISPATCH -->|Matang class 0| STRAIGHT_OUT[🟢 STRAIGHT_OUT<br/>Motor mundur<br/>Lurus keluar]
+    DISPATCH -->|Mentah class 1| SERVO_SORT1[🔴 SERVO_SORT<br/>Servo1 open 51°<br/>Motor mundur]
+    DISPATCH -->|Setengah class 2| SERVO_SORT2[🟡 SERVO_SORT<br/>Servo2 open 51°<br/>Motor mundur]
+    
+    STRAIGHT_OUT -->|Cam2 kosong| STRAIGHT_EXTRA[🟢 STRAIGHT_EXTRA<br/>Mundur tambahan 5 detik]
+    STRAIGHT_EXTRA --> COOLDOWN
+    
+    SERVO_SORT1 -->|Tracking cam2<br/>buah di ROI paddle| TAMPOL1[💥 TAMPOL<br/>Servo1 close 0°]
+    SERVO_SORT2 -->|Tracking cam2<br/>buah di ROI paddle| TAMPOL2[💥 TAMPOL<br/>Servo2 close 0°]
+    
+    TAMPOL1 --> SERVO_RETURN[⏸ SERVO_RETURN<br/>Hold 500ms]
+    TAMPOL2 --> SERVO_RETURN
+    SERVO_RETURN --> COOLDOWN[⏱ COOLDOWN<br/>Servo home<br/>Beep selesai<br/>3 detik]
     COOLDOWN --> IDLE
+    
+    IDLE -.->|E-STOP| ESTOP[🛑 E-STOP<br/>Semua berhenti]
+    ESTOP -->|Clear| IDLE
+    
+    classDef idle fill:#1e3a8a,color:#fff
+    classDef classify fill:#854d0e,color:#fff
+    classDef forward fill:#166534,color:#fff
+    classDef dispatch fill:#7c2d12,color:#fff
+    classDef straight fill:#166534,color:#fff
+    classDef servo fill:#991b1b,color:#fff
+    classDef cooldown fill:#4c1d95,color:#fff
+    classDef estop fill:#dc2626,color:#fff
+    
+    class IDLE idle
+    class CLASSIFY classify
+    class FORWARD_CLEAR,FORWARD_EXTRA forward
+    class DISPATCH dispatch
+    class STRAIGHT_OUT,STRAIGHT_EXTRA straight
+    class SERVO_SORT1,SERVO_SORT2,TAMPOL1,TAMPOL2,SERVO_RETURN servo
+    class COOLDOWN cooldown
+    class ESTOP estop
 ```
 
 1. **Kamera 1** mendeteksi buah naga di area hitam → mengunci kelas kematangan (LED + beep).
