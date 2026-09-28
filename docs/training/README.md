@@ -1,15 +1,16 @@
 # Hasil Evaluasi Model (Confusion Matrix)
 
+> **Catatan (2026-09-28):** angka di halaman ini **terlalu tinggi** dan hanya
+> disimpan sebagai arsip. Saat evaluasi ini dibuat, pembagian train/val masih
+> diacak ulang setiap training, sehingga model sudah pernah melihat sebagian
+> foto uji. Pembagian sekarang stabil (berdasarkan nama file) dan hasil tiap
+> training — termasuk confusion matrix — bisa dilihat langsung di web:
+> **tab Training → Riwayat Training → klik salah satu run**.
+
 Model: `core/best.pt` (YOLOv8, 3 kelas: `matang`, `mentah`, `setengah matang`)
-Dataset validasi: `core/dataset/_build` (111 gambar val)
+Dataset validasi: `core/dataset/_build` (111 gambar val, pembagian lama)
 
-Dihasilkan dari `model.val()` pada 2026-09-28 karena seluruh run training di
-`core/runs/train_*` dijalankan dengan `plots: false` sehingga tidak pernah
-menyimpan confusion matrix sebelumnya. File ini dibuat dengan menjalankan
-validasi ulang model yang sudah ada terhadap dataset yang sama (bukan
-training ulang dari nol).
-
-## Ringkasan metrik
+## Ringkasan metrik (arsip)
 
 | Kelas            | Precision | Recall | mAP50 | mAP50-95 |
 |------------------|-----------|--------|-------|----------|

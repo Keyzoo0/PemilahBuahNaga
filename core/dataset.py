@@ -29,9 +29,11 @@ Istilah:
 - nice       : perintah Linux untuk menurunkan prioritas sebuah program.
 """
 import sys           # untuk mengetahui program python mana yang sedang dipakai
+import csv           # membaca results.csv hasil training
+import hashlib       # sidik jari file/nama (pembagian val stabil, cek model aktif)
 import json          # membaca/menulis format JSON
 import os            # urusan sistem operasi (di sini: membuat symlink)
-import random        # untuk mengacak urutan data
+import re            # pola teks, untuk memvalidasi nama run dari web
 import shutil        # menyalin & menghapus file/folder
 import signal        # mengirim sinyal ke program lain (untuk menghentikan training)
 import subprocess    # menjalankan program lain dari dalam Python
@@ -193,7 +195,20 @@ def stats():
 # =========================================================
 # BUILD STRUKTUR ULTRALYTICS (symlink -> hemat ruang & cepat)
 # =========================================================
-def build_split(val_ratio=0.2, seed=42):
+def _is_val(name, val_ratio):
+    """Apakah foto ini masuk data uji? Ditentukan oleh sidik jari NAMA filenya.
+
+    md5 mengubah nama file menjadi angka acak-tapi-tetap: nama yang sama
+    selalu menghasilkan angka yang sama. Jadi sebuah foto SELAMANYA berada di
+    kelompok yang sama, walau dataset terus bertambah. Dulu pembagian diacak
+    ulang tiap training sehingga foto uji hari ini bisa jadi foto latih
+    kemarin — nilai model jadi terlihat lebih bagus dari kenyataannya.
+    """
+    h = int(hashlib.md5(Path(name).stem.encode()).hexdigest()[:8], 16)
+    return (h % 1000) < val_ratio * 1000
+
+
+def build_split(val_ratio=0.2):
     """Membagi dataset menjadi data latih (train) dan data uji (val).
 
     Kenapa dibagi? Kalau AI diuji dengan foto yang sama persis seperti saat
@@ -201,7 +216,7 @@ def build_split(val_ratio=0.2, seed=42):
     soal. Sebagian foto sengaja disisihkan (val) sebagai soal "baru" untuk
     mengukur kepintaran sesungguhnya.
 
-    val_ratio=0.2 artinya 20% untuk uji, 80% untuk belajar.
+    val_ratio=0.2 artinya ±20% untuk uji, ±80% untuk belajar.
     """
     labeled = [p for p in sorted(IMG_DIR.glob("*.jpg"))
                if _label_path(p.name).exists() and _label_path(p.name).read_text().strip()]
@@ -216,14 +231,14 @@ def build_split(val_ratio=0.2, seed=42):
     for sub in ("images/train", "images/val", "labels/train", "labels/val"):
         (BUILD_DIR / sub).mkdir(parents=True, exist_ok=True)
 
-    # random.Random(seed) membuat pengacak dengan "benih" tetap. Dengan benih
-    # yang sama, hasil acakannya SELALU sama tiap kali dijalankan. Ini penting
-    # supaya perbandingan antar-percobaan training tetap adil.
-    random.Random(seed).shuffle(labeled)
-    # max(1, ...) memastikan minimal ada 1 foto uji walau datasetnya sedikit.
-    n_val = max(1, int(len(labeled) * val_ratio))
-    # Notasi potong (slice): [:n] = n item pertama, [n:] = sisanya setelah item ke-n.
-    val, train = labeled[:n_val], labeled[n_val:]
+    val = [p for p in labeled if _is_val(p.name, val_ratio)]
+    train = [p for p in labeled if not _is_val(p.name, val_ratio)]
+    # Dataset yang sangat kecil bisa saja tidak kebagian foto uji/latih sama
+    # sekali -> pindahkan satu foto agar keduanya tidak kosong.
+    if not val:
+        val.append(train.pop())
+    elif not train:
+        train.append(val.pop())
 
     for split, items in (("train", train), ("val", val)):
         for p in items:
@@ -260,18 +275,33 @@ class Trainer:
         self.params = {}          # pengaturan yang dipakai sesi ini
         self.result_model = None  # alamat file model hasil training
         self.error = None         # pesan error bila gagal
+        self.run_dir = None       # folder run yang sedang/terakhir berjalan
+        self.log_fh = None        # file train.log yang sedang ditulis
 
     def _append(self, line):
-        """Menambah satu baris log, dengan batas maksimal 400 baris."""
-        self.log.append(line.rstrip())   # rstrip membuang enter/spasi di ujung
+        """Menambah satu baris log, dengan batas maksimal 400 baris di memori.
+
+        Log LENGKAP juga ditulis ke runs/<run>/train.log agar tetap bisa dibaca
+        dari tab Training walau service sudah restart.
+        """
+        line = line.rstrip()                # rstrip membuang enter/spasi di ujung
+        self.log.append(line)
+        if self.log_fh:
+            self.log_fh.write(line + "\n")
+            self.log_fh.flush()
         # Batas ini penting: training bisa mencetak ribuan baris. Tanpa batas,
         # memori Raspberry Pi akan terus terpakai sampai habis.
         if len(self.log) > 400:
             # del self.log[:-400] menghapus semua kecuali 400 baris terakhir.
             del self.log[:-400]
 
-    def start(self, epochs=40, imgsz=416, batch=8, freeze=10, base_model=None):
-        """Memulai training. Mengembalikan (berhasil?, pesan/nama_run)."""
+    def start(self, epochs=40, imgsz=416, batch=8, freeze=10, base_model=None, fresh=False):
+        """Memulai training. Mengembalikan (berhasil?, pesan/nama_run).
+
+        fresh=True -> mulai dari yolov8n.pt (belum pernah melihat dataset ini),
+        bukan melanjutkan model aktif. Berguna untuk mendapat nilai evaluasi
+        yang jujur setelah pembagian data uji diperbaiki.
+        """
         with self.lock:
             # Cegah dua training berjalan bersamaan — Pi tidak akan sanggup.
             if self.running:
@@ -288,11 +318,20 @@ class Trainer:
                 return False, str(exc)
 
             # Titik awal training: model yang diberikan, atau model aktif saat ini.
-            # Kalau best.pt tak ada (mis. sengaja dihapus utk retrain dari nol),
-            # pakai yolov8n.pt pretrained (ultralytics unduh otomatis).
+            # Kalau best.pt tak ada (mis. sengaja dihapus utk retrain dari nol)
+            # atau diminta fresh, pakai yolov8n.pt pretrained.
             active = _active_model_path()
-            base = base_model or (str(active) if active.exists() else "yolov8n.pt")
+            pretrained = BASE_DIR / "yolov8n.pt"
+            pretrained = str(pretrained) if pretrained.exists() else "yolov8n.pt"  # tak ada -> diunduh ultralytics
+            if base_model:
+                base = base_model
+            elif fresh or not active.exists():
+                base = pretrained
+            else:
+                base = str(active)
             run_name = datetime.now().strftime("train_%Y%m%d_%H%M%S")
+            run_dir = RUNS_DIR / run_name
+            run_dir.mkdir(parents=True, exist_ok=True)
             self.params = {"epochs": epochs, "imgsz": imgsz, "batch": batch,
                            "freeze": freeze, "base": base, "run": run_name,
                            "train_imgs": n_train, "val_imgs": n_val}
@@ -301,28 +340,17 @@ class Trainer:
             # Jangan pakai .resolve() (mengikuti symlink -> /usr/bin/python sistem
             # yang TIDAK punya ultralytics). Ini penyebab 'module not found'.
             venv_py = sys.executable
-            # Ini kode Python yang ditulis sebagai TEKS, untuk dijalankan oleh
-            # proses terpisah lewat perintah "python -c <kode>".
-            # Huruf r di depan r'{base}' berarti "raw string": tanda backslash
-            # dalam alamat file dianggap karakter biasa, bukan kode khusus.
-            code = (
-                "from ultralytics import YOLO;"
-                "import torch; torch.set_num_threads(4);"      # pakai 4 core Pi 5
-                f"m=YOLO(r'{base}');"
-                f"m.train(data=r'{yaml_path}', epochs={epochs}, imgsz={imgsz}, batch={batch},"
-                # cache=True  -> simpan gambar di RAM agar tidak bolak-balik baca kartu SD
-                # workers=2   -> 2 pekerja penyiap data (jangan banyak, CPU terbatas)
-                # device='cpu'-> Pi tidak punya GPU NVIDIA
-                # patience=10 -> berhenti otomatis bila 10 epoch tak ada perbaikan
-                f" freeze={freeze}, cache=True, workers=2, device='cpu', patience=10,"
-                f" project=r'{RUNS_DIR}', name='{run_name}', exist_ok=True, plots=False, val=True)"
-            )
+            # Semua pengaturan dikirim ke train_worker.py sebagai satu teks JSON.
+            cfg = {"run_dir": str(run_dir), "data": str(yaml_path), "base": base,
+                   "params": self.params}
             # nice: turunkan prioritas agar web & kamera tetap lancar
             # Angka nice 10 (rentang -20 s/d 19): makin besar makin "mengalah".
-            cmd = ["nice", "-n", "10", venv_py, "-c", code]
-            self._append(f"$ {' '.join(cmd[:4])} ...")
+            cmd = ["nice", "-n", "10", venv_py, str(BASE_DIR / "train_worker.py"), json.dumps(cfg)]
+            self.run_dir = run_dir
+            self.log_fh = open(run_dir / "train.log", "a")
+            self._append(f"$ {' '.join(cmd[:5])} ...")
             self._append(f"# train={n_train} val={n_val} epochs={epochs} imgsz={imgsz} "
-                         f"batch={batch} freeze={freeze}")
+                         f"batch={batch} freeze={freeze} base={Path(base).name}")
             # Popen menjalankan program lain TANPA menunggu selesai, sehingga
             # server web tetap bisa melayani permintaan sementara training jalan.
             #   stdout=PIPE          -> tangkap keluarannya agar bisa dibaca
@@ -349,29 +377,26 @@ class Trainer:
             self._append(f"[pump error] {exc}")
         # wait() menunggu proses benar-benar berakhir dan memberi kode keluarnya.
         rc = self.proc.wait()
-        self.running = False
-        # Aturan umum Linux: kode 0 = sukses, selain 0 = ada masalah.
-        if rc == 0:
-            # ultralytics bisa menyisipkan subfolder (mis. detect/) -> cari rekursif
-            run = self.params.get("run", "")
-            # rglob mencari sampai ke dalam semua subfolder (r = recursive).
-            # next(..., None) mengambil hasil pertama; None kalau tak ketemu.
-            best = next(RUNS_DIR.rglob(f"{run}/weights/best.pt"), None)
-            if best is None:  # fallback: best.pt terbaru
-                # Urutkan semua best.pt berdasarkan waktu ubah (st_mtime),
-                # terbaru di depan, lalu ambil yang pertama.
-                cands = sorted(RUNS_DIR.rglob("*/weights/best.pt"),
-                               key=lambda p: p.stat().st_mtime, reverse=True)
-                best = cands[0] if cands else None
-            if best is not None and best.exists():
-                self.result_model = str(best)
-                self._append(f"[OK] Model selesai: {best}")
-            else:
-                self.error = "Training selesai tetapi best.pt tidak ditemukan"
-                self._append(f"[ERROR] {self.error}")
+        meta = _read_json(self.run_dir / "run.json") or {"run": self.run_dir.name}
+        # Worker mati sebelum sempat menulis status (mis. gagal import) -> tandai gagal.
+        if meta.get("status") in (None, "running"):
+            meta.update(status="failed", error=f"Proses training berhenti (exit {rc})",
+                        finished=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            (self.run_dir / "run.json").write_text(json.dumps(meta, indent=2))
+        best = self.run_dir / "weights" / "best.pt"
+        if best.exists():
+            self.result_model = str(best)
+            label = "dihentikan" if meta["status"] == "stopped" else "selesai"
+            self._append(f"[OK] Training {label}. Model: {best}")
         else:
-            self.error = f"Training gagal (exit {rc})"
+            self.error = meta.get("error") or f"Training gagal (exit {rc})"
             self._append(f"[ERROR] {self.error}")
+        self.log_fh.close()
+        self.log_fh = None
+        prune_runs()
+        # running dimatikan PALING AKHIR: web memakai perubahan ini sebagai
+        # tanda untuk memuat ulang riwayat, jadi eval & pemangkasan harus sudah beres.
+        self.running = False
 
     def stop(self):
         """Menghentikan training di tengah jalan."""
@@ -439,6 +464,191 @@ def list_models():
                     "mtime": datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")})
     # Urutkan berdasarkan waktu, terbaru di atas.
     return sorted(out, key=lambda x: x["mtime"], reverse=True)
+
+
+# =========================================================
+# RIWAYAT TRAINING (tab Training -> klik run -> confusion matrix dll)
+# =========================================================
+KEEP_RUNS = 10                                  # run yang disimpan; sisanya dihapus
+RUN_NAME = re.compile(r"^train_\d{8}_\d{6}$")   # pola nama run yang sah
+EVAL_FILE = re.compile(r"^[\w.-]+\.(png|jpg)$") # file gambar eval yang boleh diambil web
+_md5_cache = {}
+
+
+def _read_json(path):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _run_dirs():
+    """Semua folder run, terbaru dulu (nama berisi tanggal-jam, jadi urut nama = urut waktu)."""
+    return sorted((d for d in RUNS_DIR.glob("train_*") if d.is_dir() and RUN_NAME.match(d.name)),
+                  key=lambda d: d.name, reverse=True)
+
+
+def prune_runs(keep=KEEP_RUNS):
+    """Hapus folder run selain `keep` run terbaru. Model aktif (core/best.pt)
+    adalah SALINAN, jadi tidak ikut terhapus."""
+    for d in _run_dirs()[keep:]:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _read_args(run_dir):
+    """args.yaml ultralytics isinya datar 'kunci: nilai' -> cukup dibaca per baris."""
+    out = {}
+    try:
+        for line in (run_dir / "args.yaml").read_text().splitlines():
+            k, sep, v = line.partition(":")
+            if sep:
+                out[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return out
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_curves(run_dir):
+    """results.csv -> daftar metrik per epoch untuk grafik di web."""
+    rows = []
+    try:
+        with open(run_dir / "results.csv", newline="") as f:
+            for r in csv.DictReader(f):
+                r = {k.strip(): v for k, v in r.items()}
+                loss = lambda s: sum(_num(r.get(f"{s}/{k}_loss")) or 0 for k in ("box", "cls", "dfl"))
+                rows.append({
+                    "epoch": int(float(r["epoch"])),
+                    "time": _num(r.get("time")),
+                    "precision": _num(r.get("metrics/precision(B)")),
+                    "recall": _num(r.get("metrics/recall(B)")),
+                    "map50": _num(r.get("metrics/mAP50(B)")),
+                    "map50_95": _num(r.get("metrics/mAP50-95(B)")),
+                    "train_loss": round(loss("train"), 5),
+                    "val_loss": round(loss("val"), 5),
+                })
+    except (OSError, KeyError, ValueError):
+        pass
+    return rows
+
+
+def _legacy_meta(run_dir, curves, args):
+    """Run lama (sebelum ada run.json): tebak statusnya dari results.csv.
+
+    Aturan early-stop ultralytics: berhenti bila `patience` epoch berturut-turut
+    mAP50-95 tidak membaik. Kalau jumlah epoch belum penuh dan aturan itu tidak
+    terpenuhi, berarti dihentikan manual.
+    """
+    meta = {"run": run_dir.name, "legacy": True}
+    if not curves:
+        meta["status"] = "failed"
+        return meta
+    target = int(_num(args.get("epochs")) or 0)
+    patience = int(_num(args.get("patience")) or 100)
+    done = curves[-1]["epoch"]
+    scores = [c["map50_95"] or 0 for c in curves]
+    best_epoch = curves[scores.index(max(scores))]["epoch"]
+    meta["status"] = "completed" if done >= target or done - best_epoch >= patience else "stopped"
+    return meta
+
+
+def _file_md5(path):
+    st = path.stat()
+    key = (str(path), st.st_size, st.st_mtime)
+    if key not in _md5_cache:
+        h = hashlib.md5()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        _md5_cache[key] = h.hexdigest()
+    return _md5_cache[key]
+
+
+def _is_active(best):
+    """Model run ini sama persis dengan core/best.pt yang sedang dipakai?"""
+    active = BASE_DIR / "best.pt"
+    if not (best.exists() and active.exists()):
+        return False
+    # Bandingkan ukuran dulu (murah); hitung md5 hanya kalau ukurannya sama.
+    return best.stat().st_size == active.stat().st_size and _file_md5(best) == _file_md5(active)
+
+
+def _run_summary(run_dir):
+    args = _read_args(run_dir)
+    curves = _read_curves(run_dir)
+    meta = _read_json(run_dir / "run.json") or _legacy_meta(run_dir, curves, args)
+    ev = _read_json(run_dir / "eval.json")
+    best = run_dir / "weights" / "best.pt"
+    # Run yang masih berjalan milik Trainer; status di file bisa tertinggal.
+    running = trainer.running and trainer.run_dir == run_dir
+    return {
+        "run": run_dir.name,
+        "started": datetime.strptime(run_dir.name, "train_%Y%m%d_%H%M%S").strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "running" if running else meta.get("status"),
+        "legacy": meta.get("legacy", False),
+        "epochs_done": curves[-1]["epoch"] if curves else 0,
+        "epochs": int(_num(args.get("epochs")) or meta.get("params", {}).get("epochs") or 0),
+        "duration_s": curves[-1]["time"] if curves else None,
+        "has_model": best.exists(),
+        "model_path": str(best) if best.exists() else None,
+        "is_active": _is_active(best),
+        "eval": ({"retro": ev.get("retro", False), **ev["overall"]} if ev else None),
+    }
+
+
+def list_runs():
+    """Ringkasan run terbaru (maksimal KEEP_RUNS) untuk tabel riwayat."""
+    return [_run_summary(d) for d in _run_dirs()[:KEEP_RUNS]]
+
+
+def _run_dir(run):
+    """Nama run dari web -> folder. None kalau nama tidak sah / tidak ada."""
+    if not RUN_NAME.match(run or ""):
+        return None
+    d = RUNS_DIR / run
+    return d if d.is_dir() else None
+
+
+def run_detail(run):
+    """Semua isi satu run: ringkasan, confusion matrix, kurva, parameter, log."""
+    d = _run_dir(run)
+    if d is None:
+        return None
+    meta = _read_json(d / "run.json") or {}
+    args = _read_args(d)
+    log = []
+    try:
+        log = (d / "train.log").read_text(errors="replace").splitlines()[-300:]
+    except OSError:
+        pass
+    eval_dir = d / "eval"
+    images = sorted(p.name for p in eval_dir.glob("*") if EVAL_FILE.match(p.name)) if eval_dir.is_dir() else []
+    return {
+        **_run_summary(d),
+        "params": {k: args.get(k) for k in ("model", "epochs", "imgsz", "batch", "freeze", "patience")},
+        "train_imgs": meta.get("params", {}).get("train_imgs"),
+        "error": meta.get("error"),
+        "eval_error": meta.get("eval_error"),
+        "eval_detail": _read_json(d / "eval.json"),
+        "curves": _read_curves(d),
+        "log": log,
+        "images": images,
+    }
+
+
+def run_file(run, name):
+    """Alamat gambar eval yang aman untuk dikirim ke browser, atau None."""
+    d = _run_dir(run)
+    if d is None or not EVAL_FILE.match(name):
+        return None
+    p = d / "eval" / name
+    return p if p.is_file() else None
 
 
 # Satu objek Trainer dipakai bersama seluruh program.

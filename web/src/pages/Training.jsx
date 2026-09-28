@@ -7,27 +7,27 @@
 // puluhan menit) di server. Browser tidak menunggu diam, melainkan bertanya
 // "sudah sampai mana?" tiap 2 detik lalu memperbarui tampilan.
 import React, { useEffect, useRef, useState } from "react";
-import { dsList, trainStart, trainStop, trainStatus, listModels, activateModel, exportModel, exportStatus } from "../api.js";
+import { dsList, trainStart, trainStop, trainStatus, listModels, activateModel, exportModel, exportStatus, trainRuns } from "../api.js";
+import RunDetail, { StatusBadge, fmtWhen, fmtDur, pct } from "../components/RunDetail.jsx";
 
 export default function Training() {
   const [st, setSt] = useState({ running: false, log: [] });   // status training
   const [stats, setStats] = useState({});                      // ringkasan dataset
-  const [models, setModels] = useState([]);                    // daftar model hasil training
+  const [runs, setRuns] = useState([]);                        // riwayat training (10 terakhir)
+  const [keep, setKeep] = useState(10);                        // jumlah run yang disimpan server
+  const [sel, setSel] = useState(null);                        // run yang sedang dibuka detailnya
   const [activeKind, setActiveKind] = useState("");            // format model yang dipakai
   const [exp, setExp] = useState({ running: false });          // status export model
   // Nilai awal parameter training. Angka-angka ini sudah disesuaikan agar
   // Raspberry Pi sanggup menjalankannya.
-  const [p, setP] = useState({ epochs: 40, imgsz: 416, batch: 8, freeze: 10 });
+  const [p, setP] = useState({ epochs: 40, imgsz: 416, batch: 8, freeze: 10, fresh: false });
   const [toast, setToast] = useState(null);
   const logRef = useRef(null);   // pengait ke kotak log, untuk menggulir otomatis
 
   // Mengambil semua data terbaru dari server sekaligus.
   const refresh = () => {
     trainStatus().then(setSt).catch(() => {});
-    listModels().then((d) => {
-      setModels(d.models || []);
-      setActiveKind(d.active_kind || "");
-    }).catch(() => {});
+    listModels().then((d) => setActiveKind(d.active_kind || "")).catch(() => {});
     exportStatus().then(setExp).catch(() => {});
   };
 
@@ -49,6 +49,15 @@ export default function Training() {
     return () => clearInterval(t);
   }, []);
 
+  // Riwayat dimuat ulang saat halaman dibuka dan tiap kali training
+  // mulai/berakhir (run baru muncul, run lama terpangkas, hasil eval masuk).
+  const loadRuns = () =>
+    trainRuns().then((d) => {
+      setRuns(d.runs || []);
+      setKeep(d.keep || 10);
+    }).catch(() => {});
+  useEffect(() => { loadRuns(); }, [st.running]);
+
   // Efek 2: gulirkan kotak log ke bawah otomatis setiap ada baris baru,
   // supaya baris terbaru selalu terlihat tanpa perlu digulir manual.
   // [st.log] artinya efek ini dijalankan ulang tiap kali isi log berubah.
@@ -65,7 +74,10 @@ export default function Training() {
 
   const start = async () => {
     const res = await trainStart(p);
-    if (res.ok) flash("ok", `Training dimulai: ${res.run}. Sorting dialihkan ke MANUAL.`);
+    if (res.ok) {
+      flash("ok", `Training dimulai: ${res.run}. Sorting dialihkan ke MANUAL.`);
+      setSel(res.run);   // langsung buka detail run baru agar grafiknya terlihat bergerak
+    }
     else flash("err", res.message);
     refresh();
   };
@@ -77,6 +89,7 @@ export default function Training() {
     if (!confirm("Pasang model ini sebagai model aktif? Model lama akan di-backup.")) return;
     const res = await activateModel(path);
     flash(res.ok ? "ok" : "err", res.message);
+    loadRuns();   // penanda "model aktif" pindah ke run ini
   };
 
   // Perkiraan kasar lama training, dalam detik.
@@ -114,6 +127,13 @@ export default function Training() {
                 />
               </div>
             ))}
+          </div>
+          <div className="field">
+            <label>Mulai dari</label>
+            <select value={p.fresh ? "fresh" : "active"} onChange={(e) => setP({ ...p, fresh: e.target.value === "fresh" })}>
+              <option value="active">Model aktif (lanjutkan, lebih cepat)</option>
+              <option value="fresh">yolov8n bersih (nilai evaluasi paling jujur)</option>
+            </select>
           </div>
           <div className="roi-hint">
             Pi 5 melatih di CPU. <b>freeze=10</b> membekukan backbone sehingga hanya kepala
@@ -169,28 +189,6 @@ export default function Training() {
               <div className="lbl">Belum</div>
             </div>
           </div>
-          <div className="subhead" style={{ marginTop: 14 }}>Model hasil training</div>
-          <table>
-            <tbody>
-              {models.length === 0 && (
-                <tr><td style={{ color: "var(--text-dim)" }}>Belum ada model.</td></tr>
-              )}
-              {models.map((m) => (
-                // Alamat file dipakai sebagai key karena pasti unik.
-                <tr key={m.path}>
-                  <td>{m.run}</td>
-                  <td>{m.size_mb} MB</td>
-                  <td>{m.mtime}</td>
-                  <td>
-                    <button className="btn sm primary" onClick={() => activate(m.path)}>
-                      Aktifkan
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
           <div className="subhead" style={{ marginTop: 16 }}>
             Optimasi Model (lebih ringan di Pi)
           </div>
@@ -220,6 +218,44 @@ export default function Training() {
           </div>
         </div>
       </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <h3>Riwayat Training · {keep} terakhir</h3>
+        <div className="cm-wrap">
+          <table className="runs">
+            <thead>
+              <tr><th>Waktu</th><th>Status</th><th>Epoch</th><th>Durasi</th><th>mAP50</th><th>mAP50-95</th><th>Model</th></tr>
+            </thead>
+            <tbody>
+              {runs.length === 0 && (
+                <tr><td colSpan={7} style={{ color: "var(--text-dim)" }}>Belum ada training.</td></tr>
+              )}
+              {runs.map((r) => (
+                // Klik baris -> buka detail (confusion matrix dll) di bawah tabel.
+                <tr key={r.run} className={sel === r.run ? "sel" : ""} onClick={() => setSel(sel === r.run ? null : r.run)}>
+                  <td>{fmtWhen(r.started)}</td>
+                  <td><StatusBadge status={r.status} /></td>
+                  <td>{r.epochs_done}/{r.epochs}</td>
+                  <td>{fmtDur(r.duration_s)}</td>
+                  <td>{pct(r.eval?.map50)}{r.eval?.retro && <span title="Dievaluasi ulang — angka cenderung terlalu bagus"> ⚠</span>}</td>
+                  <td>{pct(r.eval?.map50_95)}</td>
+                  <td>{r.is_active ? <span className="cam-badge">AKTIF</span> : r.has_model ? "ada" : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="roi-hint">
+          Klik salah satu baris untuk melihat confusion matrix dan hasil lengkapnya. Hanya {keep} run
+          terakhir yang disimpan; yang lebih lama otomatis dihapus (model aktif tidak ikut terhapus).
+        </div>
+      </div>
+
+      {sel && (
+        <div style={{ marginBottom: 16 }}>
+          <RunDetail run={sel} onActivate={activate} onClose={() => setSel(null)} />
+        </div>
+      )}
 
       <div className="card">
         <h3>Log Training {st.running && "· berjalan"}</h3>

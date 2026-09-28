@@ -114,6 +114,19 @@ export async function listModels() {
 }
 export const activateModel = (path) => post("/api/models/activate", { path });
 
+// riwayat training (10 terakhir) + detail satu run (confusion matrix, kurva, log)
+export async function trainRuns() {
+  const r = await fetch("/api/train/runs");
+  return r.json();
+}
+export async function trainRun(run) {
+  const r = await fetch(`/api/train/runs/${encodeURIComponent(run)}`);
+  return r.json();
+}
+// Alamat gambar hasil evaluasi, dipakai langsung di <img src> / <a href>.
+export const runImgUrl = (run, name) =>
+  `/api/train/runs/${encodeURIComponent(run)}/img/${encodeURIComponent(name)}`;
+
 // export model .pt -> onnx/ncnn
 export const exportModel = (format, imgsz) => post("/api/model/export", { format, imgsz });
 export async function exportStatus() {

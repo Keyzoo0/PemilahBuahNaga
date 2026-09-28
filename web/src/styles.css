@@ -135,7 +135,39 @@ th { color: var(--text-dim); font-weight: 600; text-transform: uppercase; font-s
 /* ---------- Manual panel ---------- */
 .manual-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 
+/* ---------- Riwayat & hasil training ---------- */
+table.runs tbody tr { cursor: pointer; }
+table.runs tbody tr:hover { background: var(--bg-elev); }
+table.runs tbody tr.sel { background: var(--pink-soft); }
+.status { white-space: nowrap; }
+.cm-wrap { overflow-x: auto; }
+.run-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.warn { border: 1px solid var(--yellow); background: rgba(234,179,8,0.08); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+.mini4 { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.stat.sm { background: var(--bg-elev); border-radius: 10px; padding: 10px 4px; }
+.stat.sm .num { font-size: 20px; font-weight: 700; }
+.stat.sm .lbl { font-size: 11px; margin-top: 4px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { background: transparent; border: 0; color: var(--text-dim); padding: 6px 12px; font-size: 12px; cursor: pointer; }
+.seg button.active { background: var(--bg-elev); color: var(--text); font-weight: 600; }
+table.cm { width: auto; border-collapse: separate; border-spacing: 2px; }
+table.cm th { text-transform: none; font-size: 12px; padding: 6px 8px; border: 0; text-align: center; }
+table.cm tbody th { text-align: right; }
+table.cm td { border: 0; border-radius: 4px; text-align: center; min-width: 58px; padding: 12px 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
+table.cm td.cm-na { color: var(--text-dim); font-weight: 400; }
+table.cm .cm-corner { font-size: 10px; color: var(--text-dim); font-weight: 400; }
+.chart { position: relative; }
+.chart svg { display: block; touch-action: pan-y; }
+.chart .axis { fill: var(--text-dim); font-size: 10px; font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+.legend i, .chart-tip i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.chart-tip { position: absolute; top: 24px; pointer-events: none; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 12px; white-space: nowrap; }
+.run-detail details { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
+.run-detail summary { cursor: pointer; font-size: 13px; color: var(--text-dim); margin-bottom: 8px; }
+.logbox { background: #0a0910; border: 1px solid var(--border); border-radius: 8px; padding: 12px; max-height: 320px; overflow: auto; font-size: 12px; font-family: monospace; color: var(--text-dim); white-space: pre-wrap; }
+
 @media (max-width: 900px) {
   .cards2, .cards3, .row3, .row4 { grid-template-columns: 1fr; }
+  .mini4 { grid-template-columns: repeat(2, 1fr); }
   .topbar { flex-wrap: wrap; }
 }

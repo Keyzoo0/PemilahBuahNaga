@@ -24,7 +24,7 @@ import asyncio                 # pustaka untuk pemrograman async (menunggu tanpa
 from pathlib import Path       # penulisan alamat file yang aman
 
 from fastapi import FastAPI, Request                          # inti FastAPI
-from fastapi.responses import StreamingResponse, JSONResponse  # jenis-jenis balasan
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse  # jenis-jenis balasan
 from fastapi.staticfiles import StaticFiles                    # untuk menyajikan file statis (html/js/gambar)
 
 BASE_DIR = Path(__file__).resolve().parent          # folder core/
@@ -321,6 +321,7 @@ async def api_train_start(request: Request):
         imgsz=int(body.get("imgsz", 416)),    # ukuran gambar saat dilatih
         batch=int(body.get("batch", 8)),      # berapa gambar diproses sekaligus
         freeze=int(body.get("freeze", 10)),   # berapa lapisan model dibekukan (tidak ikut dilatih)
+        fresh=bool(body.get("fresh", False)),  # True = mulai dari yolov8n.pt, bukan model aktif
     )
     if not ok:
         # Gagal memulai -> kembalikan sortir ke mode otomatis seperti semula.
@@ -341,6 +342,33 @@ def api_train_stop():
     """Menghentikan pelatihan di tengah jalan."""
     import dataset as ds
     return {"ok": ds.trainer.stop()}
+
+
+@app.get("/api/train/runs")
+def api_train_runs():
+    """Riwayat training (10 terakhir) untuk tabel di tab Training."""
+    import dataset as ds
+    return {"runs": ds.list_runs(), "keep": ds.KEEP_RUNS}
+
+
+@app.get("/api/train/runs/{run}")
+def api_train_run(run: str):
+    """Detail satu run: confusion matrix, metrik per kelas, kurva, parameter, log."""
+    import dataset as ds
+    d = ds.run_detail(run)
+    if d is None:
+        return JSONResponse({"ok": False, "message": "Run tidak ditemukan"}, status_code=404)
+    return d
+
+
+@app.get("/api/train/runs/{run}/img/{name}")
+def api_train_run_img(run: str, name: str):
+    """Gambar hasil evaluasi (confusion_matrix.png, kurva PR, dll)."""
+    import dataset as ds
+    p = ds.run_file(run, name)
+    if p is None:
+        return JSONResponse({"ok": False, "message": "File tidak ditemukan"}, status_code=404)
+    return FileResponse(p)
 
 
 @app.get("/api/models")
