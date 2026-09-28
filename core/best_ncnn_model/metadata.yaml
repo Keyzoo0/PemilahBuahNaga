@@ -1,0 +1,22 @@
+description: Ultralytics best model trained on /home/dila/PemilahBuahNaga/core/dataset/_build/dataset.yaml
+author: Ultralytics
+date: '2026-07-31T23:53:19.817300'
+version: 8.4.104
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+head: Detect
+batch: 1
+imgsz:
+- 416
+- 416
+names:
+  0: matang
+  1: mentah
+  2: setengah matang
+args:
+  batch: 1
+  quantize: null
+channels: 3
+end2end: false

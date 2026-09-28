@@ -13,7 +13,7 @@
   },
   "detect": {
     "imgsz": 480,
-    "conf_threshold": 0.5,
+    "conf_threshold": 0.4,
     "conf_per_class": {
       "matang": 0.5,
       "mentah": 0.5,
@@ -21,17 +21,17 @@
     },
     "min_box_area": 4000,
     "roi": {
-      "x": 392,
-      "y": 50,
-      "w": 847,
-      "h": 666
+      "x": 306,
+      "y": 28,
+      "w": 903,
+      "h": 691
     },
     "presence_frames": 5,
     "exit_frames": 6,
-    "settle_motion_threshold": 100,
-    "settle_frames": 100,
+    "settle_motion_threshold": 2,
+    "settle_frames": 8,
     "fg_pixel_threshold": 30,
-    "fg_area_ratio": 0.04,
+    "fg_area_ratio": 0.05,
     "settle_timeout_seconds": 8,
     "max_consecutive_rejects": 3
   },
@@ -52,16 +52,16 @@
   },
   "sort_cam2": {
     "paddle_roi_1": {
-      "x": 503,
-      "y": 399,
-      "w": 371,
-      "h": 312
+      "x": 384,
+      "y": 412,
+      "w": 252,
+      "h": 238
     },
     "paddle_roi_2": {
-      "x": 531,
-      "y": 49,
-      "w": 349,
-      "h": 135
+      "x": 433,
+      "y": 31,
+      "w": 370,
+      "h": 188
     },
     "paddle_roi": {
       "x": 520,
@@ -74,7 +74,7 @@
     "slap_pixel_threshold": 45,
     "blind_spot_seconds": 2,
     "slap_area_ratio_1": 0.25,
-    "slap_area_ratio_2": 0.4
+    "slap_area_ratio_2": 0.3
   },
   "serial": {
     "port": "/dev/ttyUSB0",

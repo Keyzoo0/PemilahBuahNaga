@@ -288,7 +288,10 @@ class Trainer:
                 return False, str(exc)
 
             # Titik awal training: model yang diberikan, atau model aktif saat ini.
-            base = base_model or str(_active_model_path())
+            # Kalau best.pt tak ada (mis. sengaja dihapus utk retrain dari nol),
+            # pakai yolov8n.pt pretrained (ultralytics unduh otomatis).
+            active = _active_model_path()
+            base = base_model or (str(active) if active.exists() else "yolov8n.pt")
             run_name = datetime.now().strftime("train_%Y%m%d_%H%M%S")
             self.params = {"epochs": epochs, "imgsz": imgsz, "batch": batch,
                            "freeze": freeze, "base": base, "run": run_name,
