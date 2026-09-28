@@ -39,23 +39,29 @@ export default function Training() {
     refresh();
   };
 
-  // Efek 1: muat data awal, lalu perbarui otomatis tiap 2 detik.
-  useEffect(() => {
-    dsList().then((d) => setStats(d.stats || {}));
-    refresh();
-    const t = setInterval(refresh, 2000);
-    // Hentikan timer saat halaman ditinggalkan, agar tidak terus berjalan
-    // di latar belakang dan membebani server.
-    return () => clearInterval(t);
-  }, []);
-
-  // Riwayat dimuat ulang saat halaman dibuka dan tiap kali training
-  // mulai/berakhir (run baru muncul, run lama terpangkas, hasil eval masuk).
+  // Riwayat training (10 terakhir): run baru, run terpangkas, hasil eval.
   const loadRuns = () =>
     trainRuns().then((d) => {
       setRuns(d.runs || []);
       setKeep(d.keep || 10);
     }).catch(() => {});
+  const loadStats = () => dsList().then((d) => setStats(d.stats || {})).catch(() => {});
+
+  // Efek 1: muat data awal, lalu perbarui otomatis. Status training tiap 2
+  // detik; dataset & riwayat tiap 10 detik (lebih berat, jarang berubah).
+  // Pembaruan berkala ini juga membuat halaman pulih sendiri kalau dibuka
+  // saat service sedang restart.
+  useEffect(() => {
+    loadStats();
+    refresh();
+    const t = setInterval(refresh, 2000);
+    const t2 = setInterval(() => { loadStats(); loadRuns(); }, 10000);
+    // Hentikan timer saat halaman ditinggalkan, agar tidak terus berjalan
+    // di latar belakang dan membebani server.
+    return () => { clearInterval(t); clearInterval(t2); };
+  }, []);
+
+  // Muat ulang riwayat juga tepat saat training mulai/berakhir.
   useEffect(() => { loadRuns(); }, [st.running]);
 
   // Efek 2: gulirkan kotak log ke bawah otomatis setiap ada baris baru,
