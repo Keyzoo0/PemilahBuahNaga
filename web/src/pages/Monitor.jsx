@@ -8,6 +8,7 @@
 // tidak ada dua bagian yang menampilkan angka berbeda.
 import React, { useEffect, useState } from "react";
 import { getHistory, getClasses, deleteHistory, clearHistory } from "../api.js";
+import Stream from "../components/Stream.jsx";
 
 // Peta: nama kematangan -> nama class CSS, untuk menentukan warna badge.
 // Perhatikan "setengah matang" ditulis dalam tanda kutip karena mengandung
@@ -45,7 +46,7 @@ function CameraCard({ badge, title, src, fps, ok }) {
         {/* Alamat ini adalah siaran MJPEG dari server. Tag <img> biasa
             ternyata sanggup menampilkannya seperti video — inilah kenapa
             MJPEG dipilih: sederhana dan jalan di semua browser. */}
-        <img src={src} alt={title} />
+        <Stream src={src} alt={title} />
       </div>
     </div>
   );

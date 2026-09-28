@@ -1,5 +1,6 @@
 // useRef = "pengait" untuk menyentuh elemen HTML secara langsung.
 import React, { useRef, useState } from "react";
+import Stream from "./Stream.jsx";
 
 // Editor ROI: seret kotak di atas stream langsung. Koordinat disimpan
 // dalam ruang frame (frameW x frameH) sesuai config kamera.
@@ -117,7 +118,7 @@ export default function RoiEditor({ label, streamSrc, frameW, frameH, value, onC
       >
         {/* draggable={false} mematikan kebiasaan browser yang menyeret gambar
             sebagai file — kalau tidak dimatikan, ini mengganggu penggambaran kotak. */}
-        <img src={streamSrc} alt={label} draggable={false} />
+        <Stream src={streamSrc} alt={label} draggable={false} />
         {/* Kotak hanya digambar kalau style ada isinya. */}
         {style && <div className="roi-rect" style={style} />}
       </div>

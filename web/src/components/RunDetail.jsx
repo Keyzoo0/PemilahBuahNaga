@@ -33,23 +33,39 @@ export const pct = (v) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 
 export default function RunDetail({ run, onActivate, onClose }) {
   const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [attempt, setAttempt] = useState(0);   // naik saat tombol "Coba lagi" ditekan
 
   // Muat detail; selama run masih berjalan, perbarui tiap 3 detik agar
-  // grafik & log ikut bergerak.
+  // grafik & log ikut bergerak. Permintaan yang macet dibatalkan setelah
+  // 15 detik supaya halaman tidak menampilkan "Memuat…" selamanya.
   useEffect(() => {
     let alive = true, t;
-    const load = () =>
-      trainRun(run).then((x) => {
+    const load = () => {
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("server tidak membalas (15 detik)")), 15000));
+      Promise.race([trainRun(run), timeout]).then((x) => {
         if (!alive) return;
         setD(x);
+        setErr(null);
         if (x.status === "running") t = setTimeout(load, 3000);
-      }).catch(() => {});
+      }).catch((e) => { if (alive) setErr(e.message || String(e)); });
+    };
     setD(null);
+    setErr(null);
     load();
     return () => { alive = false; clearTimeout(t); };
-  }, [run]);
+  }, [run, attempt]);
 
-  if (!d) return <div className="card">Memuat {run}…</div>;
+  if (!d) return (
+    <div className="card">
+      {err ? (
+        <span className="toast err">
+          Gagal memuat {run}: {err}.{" "}
+          <button className="btn sm" onClick={() => setAttempt(attempt + 1)}>Coba lagi</button>
+        </span>
+      ) : `Memuat ${run}…`}
+    </div>
+  );
   if (d.ok === false) return <div className="card toast err">{d.message}</div>;
 
   const ev = d.eval_detail;

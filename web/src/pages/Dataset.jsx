@@ -4,6 +4,7 @@
 // Training (latih model baru).
 import React, { useEffect, useState } from "react";
 import { dsList, dsCapture, dsDelete } from "../api.js";
+import Stream from "../components/Stream.jsx";
 
 // { onAnnotate } adalah props berupa FUNGSI yang dikirim App.jsx. Saat foto
 // diklik, fungsi ini dipanggil agar induk berpindah ke halaman Anotasi.
@@ -57,7 +58,7 @@ export default function Dataset({ onAnnotate }) {
           <div className="cam-view">
             {/* Siaran langsung kamera 1, agar pengguna bisa mengatur posisi
                 buah dulu sebelum menekan Capture. */}
-            <img src="/video/cam1" alt="cam1" />
+            <Stream src="/video/cam1" alt="cam1" />
           </div>
           <div style={{ padding: 14, display: "flex", gap: 10, alignItems: "center" }}>
             <button className="btn primary" onClick={capture} disabled={busy}>
