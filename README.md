@@ -88,6 +88,43 @@ Model `best.pt` (3 kelas). Contoh deteksi pada belt:
 **Performa di Pi 5** (CPU, 4 thread): imgsz 480 ≈ **5 FPS**, imgsz 320 ≈ **10 FPS**.
 Bisa ~2× lebih cepat dengan export NCNN.
 
+### 📊 Hasil Training
+
+Evaluasi model aktif (training 23 Sep 2026, imgsz 416) pada **125 foto uji**:
+
+| Kelas | Jumlah | Precision | Recall | mAP50 | mAP50-95 |
+|---|---|---|---|---|---|
+| **Semua** | 125 | 97.2% | 96.9% | 98.6% | 75.6% |
+| `matang` | 30 | 91.5% | 100% | 97.0% | 73.7% |
+| `mentah` | 44 | 100% | 99.6% | 99.5% | 77.4% |
+| `setengah matang` | 51 | 100% | 91.1% | 99.3% | 75.6% |
+
+<p align="center">
+  <img src="docs/training/confusion_matrix.png" width="49%" alt="Confusion matrix">
+  <img src="docs/training/confusion_matrix_normalized.png" width="49%" alt="Confusion matrix (normalized)">
+</p>
+
+Cara membaca: kolom = kelas **sebenarnya**, baris = **tebakan model**. Diagonal = benar.
+Kesalahan terbanyak ada pada `setengah matang` yang kadang dikira `matang` (2) atau
+`mentah` (3); kolom *background* = deteksi palsu, dan tidak ada buah yang terlewat.
+
+<p align="center">
+  <img src="docs/training/BoxPR_curve.png" width="49%" alt="Kurva Precision-Recall">
+  <img src="docs/training/BoxF1_curve.png" width="49%" alt="Kurva F1">
+</p>
+
+Contoh foto uji — label anotasi (kiri) vs prediksi model (kanan):
+
+<p align="center">
+  <img src="docs/training/val_labels.jpg" width="49%" alt="Label anotasi">
+  <img src="docs/training/val_pred.jpg" width="49%" alt="Prediksi model">
+</p>
+
+> ⚠️ Model ini dilatih sebelum pembagian data uji dibuat stabil, sehingga sebagian
+> foto uji mungkin pernah terlihat saat training — angka di atas **cenderung sedikit
+> terlalu tinggi**. Hasil setiap training baru (confusion matrix, metrik per kelas,
+> grafik per epoch, log) tampil langsung di web: **tab Training → Riwayat Training → klik run**.
+
 ---
 
 ## ⚙️ Alur Kerja (State Machine)
